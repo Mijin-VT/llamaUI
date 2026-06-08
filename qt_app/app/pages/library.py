@@ -3,6 +3,7 @@
 Phase 6: table of local models with search/filter and summary tiles.
 Phase 7: real directory scan, detail panel on row selection with metadata,
 model card cache display, and action buttons (Run, Reveal, Open HF).
+Phase 11: combo-box picker replaces table rows.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from typing import Iterable, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -24,7 +26,7 @@ from PySide6.QtWidgets import (
 from ..services.hugging_face import compute_hardware_fit
 from ..services.library_scan import infer_quant, open_hf, read_card_cache, reveal_file, scan_models_dir
 from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton
-from ..widgets.cards import Card, CardTitle, Chip, FieldTile
+from ..widgets.cards import Card, CardTitle, FieldTile
 from .base import PageBase
 
 
@@ -69,93 +71,19 @@ def _fit(model: LocalModel) -> str:
     return compute_hardware_fit(model.size_bytes) or "unknown"
 
 
-_TABLE_COLUMNS = (
-    ("Model", 4),
-    ("Path", 6),
-    ("Size", 2),
-    ("Quant", 2),
-    ("Fit", 2),
-    ("Profiles", 2),
-    ("HF repo", 3),
-)
-_TABLE_STRETCH = tuple(stretch for _, stretch in _TABLE_COLUMNS)
 
-
-class _TableHeader(QFrame):
-    """One styled row acting as a column header for the model table."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("InsetRaised")
-        layout = QGridLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setHorizontalSpacing(10)
-        for col, (label, _) in enumerate(_TABLE_COLUMNS):
-            cell = QLabel(label, self)
-            cell.setObjectName("FieldLabel")
-            layout.addWidget(cell, 0, col)
-        for col, stretch in enumerate(_TABLE_STRETCH):
-            layout.setColumnStretch(col, stretch)
-
-
-class _TableRow(QFrame):
-    """One styled row representing a single :class:`LocalModel`."""
-
-    clicked = Signal(object)
-
-    def __init__(self, model: LocalModel, profile_count: int, parent=None):
-        super().__init__(parent)
-        self._model = model
-        self.setObjectName("Inset")
-        layout = QGridLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setHorizontalSpacing(10)
-        layout.setVerticalSpacing(2)
-
-        name = model.path.rsplit("/", 1)[-1] or model.id
-        name_label = QLabel(name, self)
-        name_label.setObjectName("Mono")
-        name_label.setToolTip(model.path)
-        layout.addWidget(name_label, 0, 0)
-
-        path_label = QLabel(_fmt_path(model.path), self)
-        path_label.setObjectName("Muted")
-        path_label.setToolTip(model.path)
-        layout.addWidget(path_label, 0, 1)
-
-        size_label = QLabel(_fmt_size(model.size_bytes), self)
-        size_label.setObjectName("Muted")
-        layout.addWidget(size_label, 0, 2)
-
-        quant_label = QLabel(_fmt_quant(model), self)
-        quant_label.setObjectName("Muted")
-        layout.addWidget(quant_label, 0, 3)
-
-        fit_label = QLabel(_fit(model), self)
-        fit_label.setObjectName("Muted")
-        layout.addWidget(fit_label, 0, 4)
-
-        count_label = QLabel(str(profile_count), self)
-        count_label.setObjectName("Muted")
-        count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(count_label, 0, 5)
-
-        repo_label = QLabel(model.hf_repo or "—", self)
-        repo_label.setObjectName("Muted")
-        layout.addWidget(repo_label, 0, 6)
-
-        for col, stretch in enumerate(_TABLE_STRETCH):
-            layout.setColumnStretch(col, stretch)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._model)
-        super().mousePressEvent(event)
+def _model_label(model: LocalModel) -> str:
+    """Build a display label: ``name · quant · size · provider``."""
+    name = model.path.rsplit("/", 1)[-1] or model.id
+    quant = _fmt_quant(model)
+    size = _fmt_size(model.size_bytes)
+    provider = model.hf_repo or "local"
+    return f"{name} · {quant} · {size} · {provider}"
 
 
 class LibraryPage(PageBase):
-    inspector_changed = Signal(dict)
     """Library: local GGUF inventory loaded from :class:`LibraryStore`."""
+    inspector_changed = Signal(dict)
 
     def __init__(
         self,
@@ -168,6 +96,7 @@ class LibraryPage(PageBase):
         self._profile_store = profile_store or ProfileStore.default()
         self._config_store = config_store or ConfigStore.default()
         self._selected_model: Optional[LocalModel] = None
+        self._picker_models: list[LocalModel] = []
         super().__init__(parent)
 
     def build(self) -> None:
@@ -176,7 +105,7 @@ class LibraryPage(PageBase):
             "Local GGUF inventory, model cards, profile counts, hardware fit badges.",
         )
         self._build_header()
-        self._build_table_card()
+        self._build_picker()
         self._build_detail_card()
         self._refresh()
 
@@ -226,6 +155,7 @@ class LibraryPage(PageBase):
             (self._tile_models, self._tile_profiles, self._tile_size, self._tile_last)
         ):
             tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            tile.setMinimumWidth(120)
             tiles_layout.addWidget(tile, 0, idx)
         layout.addWidget(tiles)
         self._layout.addWidget(header)
@@ -248,9 +178,9 @@ class LibraryPage(PageBase):
         self._detail_meta.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._detail_meta)
 
-        # Tags row — populated dynamically in _show_detail.
         self._tags_row = QHBoxLayout()
         self._tags_row.setSpacing(6)
+        self._tags_row.addStretch(1)
         layout.addLayout(self._tags_row)
 
         # Action buttons
@@ -290,26 +220,28 @@ class LibraryPage(PageBase):
         self._open_hf_btn.setToolTip("Open the Hugging Face model page in your browser.")
         self._open_hf_btn.clicked.connect(self._open_selected_hf)
         actions.addWidget(self._open_hf_btn)
-
         actions.addStretch(1)
         layout.addLayout(actions)
 
         self._card_text = QTextBrowser(card)
         self._card_text.setOpenExternalLinks(True)
         self._card_text.setReadOnly(True)
+        self._card_text.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._card_text)
         self._detail_card = card
         self._layout.addWidget(card)
 
-    def _build_table_card(self) -> None:
+    def _build_picker(self) -> None:
         card = Card(self._body)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
-        layout.addWidget(CardTitle("Local models", card))
 
-        self._table_card = card
-        self._table_layout = layout
+        self.model_picker = QComboBox(card)
+        self.model_picker.setObjectName("ModelPicker")
+        self.model_picker.currentIndexChanged.connect(self._on_picker_changed)
+        layout.addWidget(self.model_picker)
+
         self._layout.addWidget(card)
 
     # -- detail panel ----------------------------------------------------
@@ -440,10 +372,12 @@ class LibraryPage(PageBase):
             self.navigate_requested.emit("profiles")
 
     def select_model_by_path(self, path: str) -> None:
-        for model, _count in getattr(self, "_all_models", []):
-            if model.path == path:
-                self._show_detail(model)
-                return
+        for i in range(self.model_picker.count()):
+            mid = self.model_picker.itemData(i)
+            for model, _count in getattr(self, "_all_models", []):
+                if model.id == mid and model.path == path:
+                    self.model_picker.setCurrentIndex(i)
+                    return
 
     # -- data refresh ----------------------------------------------------
 
@@ -493,11 +427,13 @@ class LibraryPage(PageBase):
                 or needle in (model.quant or "").lower()
                 or needle in model.id.lower()
             ]
-        self._render_rows(rows)
+        self._render_picker(rows)
 
-    def _render_rows(self, rows: list[tuple[LocalModel, int]]) -> None:
-        self._clear_table()
-        models = [m for m, _ in rows]
+    def _render_picker(self, rows: list[tuple[LocalModel, int]]) -> None:
+        self.model_picker.blockSignals(True)
+        self.model_picker.clear()
+        self._picker_models = [m for m, _ in rows]
+        models = self._picker_models
         counts = [c for _, c in rows]
 
         total_size = sum(m.size_bytes or 0 for m in models)
@@ -511,61 +447,42 @@ class LibraryPage(PageBase):
         self._tile_last.set_value(_fmt_last_used(last_used))
 
         if not self._all_models:
-            self._render_empty()
+            self.model_picker.addItem("No local models yet")
+            self.model_picker.blockSignals(False)
             return
         if not rows:
-            self._render_filter_empty()
+            self.model_picker.addItem("No models match the current filter")
+            self.model_picker.blockSignals(False)
             return
 
-        grouped: dict[str, list[tuple[LocalModel, int]]] = {}
-        for model, count in rows:
-            key = model.hf_repo or str(Path(model.path).parent)
-            grouped.setdefault(key, []).append((model, count))
-        self._table_layout.addWidget(_TableHeader(self._table_card))
-        for group, group_rows in sorted(grouped.items(), key=lambda item: item[0].lower()):
-            group_label = QLabel(group, self._table_card)
-            group_label.setObjectName("CardTitle")
-            self._table_layout.addWidget(group_label)
-            for model, count in group_rows:
-                row = _TableRow(model, count, self._table_card)
-                row.clicked.connect(self._show_detail)
-                self._table_layout.addWidget(row)
+        for model, _count in rows:
+            self.model_picker.addItem(_model_label(model), model.id)
+        self.model_picker.blockSignals(False)
 
-    def _clear_table(self) -> None:
-        # Keep the first child (CardTitle); drop everything else.
-        layout = self._table_layout
-        for idx in reversed(range(layout.count())):
-            item = layout.takeAt(idx)
-            widget = item.widget() if item else None
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
-        self._table_layout.addWidget(CardTitle("Local models", self._table_card))
+        # Auto-select first item.
+        if self.model_picker.count() > 0:
+            self.model_picker.setCurrentIndex(0)
+            self._show_detail(models[0])
+
+    def _on_picker_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        models = self._picker_models
+        if index < len(models):
+            self._show_detail(models[index])
 
     def _render_empty(self) -> None:
-        body = QLabel(
-            "No local models yet. Add a GGUF via Discover, or configure the "
-            "models directory in Settings and run Rescan.",
-            self._table_card,
-        )
-        body.setObjectName("Muted")
-        body.setWordWrap(True)
-        self._table_layout.addWidget(body)
+        pass  # Handled by empty combo text in _render_picker.
 
     def _render_filter_empty(self) -> None:
-        body = QLabel(
-            "No models match the current filter.",
-            self._table_card,
-        )
-        body.setObjectName("Muted")
-        body.setWordWrap(True)
-        self._table_layout.addWidget(body)
+        pass  # Handled by empty combo text in _render_picker.
 
     def _render_error(self, message: str) -> None:
-        body = QLabel(message, self._table_card)
+        body = QLabel(message, self._body)
         body.setObjectName("Muted")
         body.setWordWrap(True)
-        self._table_layout.addWidget(body)
+        self._layout.addWidget(body)
+
 
     def _on_rescan(self) -> None:
         result = scan_models_dir(self._config_store, self._library_store)

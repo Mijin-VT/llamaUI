@@ -1,8 +1,24 @@
 """Common base for stacked page widgets."""
 from __future__ import annotations
 
+from enum import Enum
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+
+
+class PagePolicy(Enum):
+    """Determines how the shell lays out the sidebar / inspector for a page.
+
+    - STANDARD: three-column layout (sidebar | content | inspector).
+    - INSPECTOR_OPTIONAL: three-column, inspector collapsed by default.
+    - FULL_WIDTH: inspector hidden, content fills the space.
+    """
+
+    STANDARD = "standard"
+    INSPECTOR_OPTIONAL = "inspector_optional"
+    FULL_WIDTH = "full_width"
+
 
 
 class PageBase(QScrollArea):
@@ -13,6 +29,7 @@ class PageBase(QScrollArea):
     """
 
     navigate_requested = Signal(str)  # emits NavItemId value string
+    policy: PagePolicy = PagePolicy.STANDARD
 
     def __init__(self, parent=None):
         super().__init__(parent)

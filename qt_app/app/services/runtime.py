@@ -8,9 +8,13 @@ This module is UI-independent. Qt signals / UI wiring live in the app layer.
 """
 from __future__ import annotations
 
+import os
+import signal
 import socket
 import subprocess
+import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,7 +22,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Deque, List, Optional, Sequence
 
-from llama_data import AppConfig, LLAMA_OPTION_CATALOG, LocalModel, ModelProfile
+# Health poll interval (seconds) and per-request timeout (seconds).
+# These are used by the background health-polling thread.
+_HEALTH_INTERVAL = 1.0
+_HEALTH_TIMEOUT = 2.0
+
+from llama_data import AppConfig, LLAMA_OPTION_CATALOG, LocalModel, ModelProfile, clean_raw_args
 
 from .runtime_api import ApiStatus, LlamaServerApiClient
 
@@ -160,29 +169,33 @@ def build_argv(
     # Global defaults first.
     argv.extend(config.global_settings.to_argv(LLAMA_OPTION_CATALOG))
 
-    # Profile settings overlay (skip model/host/port to avoid duplicates).
+    # Profile settings overlay — only include user-explicitly-set values
+    # that differ from catalog defaults (skip model/host/port duplicates).
     if profile is not None:
         skip_ids = {"model", "host", "port"}
+        user_set = getattr(profile, "user_set", None) or set()
         for option_id, value in profile.settings.items():
             if option_id in skip_ids:
                 continue
+            if option_id not in user_set:
+                continue
             option = LLAMA_OPTION_CATALOG.get(option_id)
-            if option is not None:
-                argv.extend(value.to_argv(option))
-        argv.extend(profile.raw_args)
-
+            if option is None:
+                continue
+            # Defense in depth: skip if value matches the catalog's explicit
+            # default OR a natural default (False/0/0.0/""/[]/None) when the
+            # option has no catalog default. This catches profiles saved by
+            # pre-Section-6 code paths that baked every field into user_set.
+            if option.default is not None and value.value == option.default.value:
+                continue
+            if option.default is None and value.value in (False, 0, 0.0, "", [], None):
+                continue
+            argv.extend(value.to_argv(option))
+        # raw_args may still contain pre-Section-6 noise from the binary
+        # schema. clean_raw_args (same code path as the load-time
+        # migration) drops catalog flags and natural-default pairs.
+        argv.extend(clean_raw_args(profile.raw_args))
     return argv
-
-
-# ---------------------------------------------------------------------------
-# Controller
-# ---------------------------------------------------------------------------
-
-# Health-poll defaults.
-_HEALTH_INTERVAL = 2.0       # seconds between polls
-_HEALTH_TIMEOUT  = 2.0       # per-request timeout
-
-
 class LlamaServerController:
     """Owns a local llama-server subprocess.
 
@@ -249,6 +262,11 @@ class LlamaServerController:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    # Run in its own session so we can kill the
+                    # whole process group (parent + any workers
+                    # llama-server forks) cleanly. No-op on
+                    # Windows, but harmless.
+                    start_new_session=(sys.platform != "win32"),
                 )
             except Exception as exc:
                 self._status.state = ServerState.ERROR
@@ -261,26 +279,102 @@ class LlamaServerController:
             self._start_reader("stderr", self._process.stderr)
             self._start_health_poll(host, port)
             return self._status_copy_unlocked()
+    def stop(
+        self,
+        graceful_timeout: float = 5.0,
+        kill_timeout: float = 3.0,
+    ) -> RuntimeStatus:
+        """Stop the running process group.
 
-    def stop(self, timeout: float = 5.0) -> RuntimeStatus:
-        """Gracefully stop the running process (SIGTERM → SIGKILL)."""
+        Sequence:
+        1. ``SIGTERM`` to the whole process group (parent + workers).
+        2. Wait up to ``graceful_timeout`` seconds for the parent
+           to exit. If it does, we are done.
+        3. ``SIGKILL`` to the whole process group. Wait up to
+           ``kill_timeout`` seconds.
+        4. If still alive, log a clear error and leave the state
+           as ``ERROR`` (not ``STOPPED``) so the user knows to
+           investigate. The next ``start()`` will fail on the
+           port-already-in-use check, which is the desired
+           fail-fast behavior.
+        """
         self._stop_health.set()
         with self._lock:
             proc = self._process
             if not proc or proc.poll() is not None:
                 self._status.state = ServerState.STOPPED
+                self._status.exit_code = proc.returncode if proc else None
+                self._status.pid = None
+                self._process = None
                 self._api_client = None
                 return self._status_copy_unlocked()
+            pid = proc.pid
             self._status.state = ServerState.STOPPING
-            proc.terminate()
+            # ``os.getpgid(pid)`` may raise if the process is
+            # already gone; fall back to the pid as a group id.
+            try:
+                pgid = os.getpgid(pid)
+            except ProcessLookupError:
+                pgid = pid
 
+        # Helper that sends a signal to the whole process group
+        # on POSIX, or falls back to a single-process kill on
+        # Windows (where ``os.killpg`` is not available).
+        def _kill_group(sig: int) -> None:
+            if sys.platform == "win32":
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+            else:
+                try:
+                    os.killpg(pgid, sig)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    # Race: pid was reaped by another owner. Best
+                    # we can do is signal the leader directly.
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pass
+
+        # 1) Graceful: SIGTERM
+        _kill_group(signal.SIGTERM)
         try:
-            proc.wait(timeout=timeout)
+            proc.wait(timeout=graceful_timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=timeout)
+            pass
+
+        # 2) Forceful: SIGKILL
+        if proc.poll() is None:
+            _kill_group(signal.SIGKILL)
+            try:
+                proc.wait(timeout=kill_timeout)
+            except subprocess.TimeoutExpired:
+                pass
+
+        # 3) Final backstop: one more SIGKILL in case the
+        #    previous signals were lost (rare, but possible on
+        #    a heavily loaded kernel).
+        if proc.poll() is None:
+            _kill_group(signal.SIGKILL)
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
 
         with self._lock:
+            if proc.poll() is None:
+                # Truly stuck. Mark ERROR and leave _process set
+                # so the user can inspect; do NOT clear it.
+                self._status.state = ServerState.ERROR
+                self._status.last_error = (
+                    f"Process {pid} (pgid {pgid}) did not exit after "
+                    "SIGKILL. Check `ps -p {pid}` and `nvidia-smi` "
+                    "for orphans; you may need to kill manually."
+                ).format(pid=pid, pgid=pgid)
+                return self._status_copy_unlocked()
             self._status.state = ServerState.STOPPED
             self._status.exit_code = proc.returncode
             self._status.pid = None

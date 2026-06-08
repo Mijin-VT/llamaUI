@@ -39,8 +39,13 @@ DANGER = "#991b1b"
 DANGER_HOVER = "#b91c1c"
 
 SIDEBAR_WIDTH = 220
+SIDEBAR_DEFAULT_WIDTH = 220
+SIDEBAR_MIN_WIDTH = 160
 INSPECTOR_WIDTH = 320
+INSPECTOR_DEFAULT_WIDTH = 320
+INSPECTOR_MIN_WIDTH = 220
 HEADER_HEIGHT = 64
+SPLITTER_KEY = "llamaUI/splitter_sizes"
 
 
 @dataclass(frozen=True)
@@ -274,6 +279,7 @@ def build_stylesheet() -> str:
         background-color: {BG_RAISED};
         color: {FG_SECONDARY};
         border-radius: 14px;
+    }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
     /* --- Combo box --- */
@@ -396,8 +402,96 @@ def build_stylesheet() -> str:
     QWidget#PageBody {{
         background-color: {BG_APP};
     }}
-    """
 
+    /* --- Inspector collapse/expand buttons --- */
+    QPushButton#InspectorCollapseBtn,
+    QPushButton#InspectorExpandBtn {{
+        background-color: transparent;
+        border: none;
+        color: {FG_MUTED};
+        font-size: 14pt;
+        padding: 0px;
+    }}
+    QPushButton#InspectorCollapseBtn:hover,
+    QPushButton#InspectorExpandBtn:hover {{
+        color: {FG_PRIMARY};
+        background-color: rgba(109, 40, 217, 0.12);
+        border-radius: 4px;
+    }}
+
+    /* --- Splitter handle --- */
+    QSplitter::handle {{
+        background-color: {BORDER_SOFT};
+    }}
+
+    /* --- Importance labels (Section 4c) --- */
+    QLabel[important="1"] {{ color: #f5d76e; font-weight: 600; }}
+    QLabel[important="2"] {{ color: #ff8a65; font-weight: 600; }}
+
+    /* --- Input width cap (Section 3) --- */
+    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+        max-width: 320px;
+        min-width: 120px;
+    }}
+    QComboBox#ModelPicker {{
+        min-width: 360px;
+    }}
+
+    /* --- CollapsibleGroup (Section 5) --- */
+    #CollapsibleGroupHeader {{
+        background: #1f2330;
+        border-radius: 6px;
+    }}
+    #CollapsibleGroupHeader:hover {{
+        background: #262b3a;
+    }}
+    #CollapsibleGroupTitle {{
+        font-weight: 600;
+    }}
+    #CollapsibleGroupBody {{
+        border: 1px solid #2a2f3e;
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+    }}
+    #CollapsibleGroupCaret {{
+        color: #9aa3b8;
+        min-width: 14px;
+    }}
+    #OptionCard {{
+        background: #1c2030;
+        border: 1px solid #2a2f3e;
+        border-radius: 6px;
+    }}
+    #OptionCard:hover {{
+        border-color: #3b4252;
+    }}
+    #OptionCardLabel {{
+        font-weight: 600;
+    }}
+    #OptionCardFlag {{
+        color: #9aa3b8;
+    }}
+    #OptionCardChangedDot {{
+        color: #ff5757;
+        font-size: 11pt;
+    }}
+    #ArgumentSearchBox {{
+        min-width: 280px;
+    }}
+    QTabWidget::pane {{ border: 1px solid #2a2f3e; border-radius: 0 0 6px 6px; }}
+    QTabBar::tab {{ padding: 6px 14px; }}
+    QTabBar::tab:selected {{ background: #262b3a; border-bottom: 2px solid #6e7eff; }}
+    QTabBar::tab:!selected {{ color: #9aa3b8; }}
+    #AdvancedToggleBtn {{
+        text-align: left;
+        font-weight: 600;
+        color: #f8fafc;
+        padding: 4px 0;
+        border: none;
+        background: transparent;
+    }}
+    #AdvancedToggleBtn:hover {{ color: #cbd5e1; }}
+    """
 
 def apply_palette(app) -> None:
     """Set a dark palette that matches the QSS for native-rendered widgets.

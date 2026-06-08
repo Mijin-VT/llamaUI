@@ -1,11 +1,13 @@
 from __future__ import annotations
+import logging
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QFrame,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -13,14 +15,16 @@ from PySide6.QtWidgets import (
 
 from llama_data import ConfigStore, LibraryStore, ProfileStore
 
+from .pages.base import PagePolicy
 from .pages.diagnostics import DiagnosticsPage
 from .pages.discover import DiscoverPage
 from .pages.library import LibraryPage
-from .pages.profiles import ProfilesPage
 from .pages.run import RunPage
 from .pages.settings import SettingsPage
+from . import theme
 from .widgets.inspector import Inspector
 from .widgets.sidebar import NavItemId, Sidebar
+
 
 class MainWindow(QMainWindow):
     """Native Qt shell for the rebuilt llamaUI app."""
@@ -33,18 +37,18 @@ class MainWindow(QMainWindow):
 
         root = QWidget(self)
         root.setObjectName("AppRoot")
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
         self.sidebar = Sidebar(root)
         self.sidebar.navigated.connect(self.navigate)
-        root_layout.addWidget(self.sidebar)
 
         center = QFrame(root)
         center.setObjectName("CenterColumn")
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
         center_layout.setSpacing(0)
 
         header = QFrame(center)
@@ -62,25 +66,57 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget(center)
         center_layout.addWidget(self.stack, 1)
-        root_layout.addWidget(center, 1)
 
         self.inspector = Inspector(root)
-        root_layout.addWidget(self.inspector)
+
+        # --- QSplitter layout -------------------------------------------------
+        self._splitter = QSplitter(Qt.Orientation.Horizontal, root)
+        self._splitter.setContentsMargins(0, 0, 0, 0)
+        self._splitter.setHandleWidth(1)
+        self._splitter.addWidget(self.sidebar)
+        self._splitter.addWidget(center)
+        self._splitter.addWidget(self.inspector)
+        root_layout.addWidget(self._splitter, 1)
+
+        # Default sizes: sidebar | center | inspector
+        self._default_sizes = [
+            theme.SIDEBAR_DEFAULT_WIDTH,
+            760,
+            theme.INSPECTOR_DEFAULT_WIDTH,
+        ]
+        self._splitter.setSizes(self._default_sizes)
+
+        # Stretch factors: sidebar=0, center=1 (stretches), inspector=0
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 0)
+
+        # Persist splitter sizes via QSettings
+        self._settings = QSettings(theme.SPLITTER_KEY, QSettings.Format.IniFormat)
+        self._splitter.splitterMoved.connect(self._save_splitter_sizes)
+        self._restore_splitter_sizes()
 
         # Shared stores so all pages read/write the same persisted state.
         config_store = ConfigStore.default()
         library_store = LibraryStore.default()
+        # One-time cleanup: drop stale companion entries from pre-Phase-11 library.json
+        try:
+            from app.services.library_scan import is_companion_gguf, scan_models_dir
+            if any(is_companion_gguf(Path(m.path)) for m in library_store.load()):
+                library_store.save([])
+                scan_models_dir(config_store, library_store)
+                logging.getLogger(__name__).info("Stale companion entries detected; library rescanned.")
+        except Exception:
+            pass
         profile_store = ProfileStore.default()
 
         self._pages: dict[NavItemId, QWidget] = {
             NavItemId.LIBRARY: LibraryPage(library_store=library_store, profile_store=profile_store, config_store=config_store),
             NavItemId.DISCOVER: DiscoverPage(),
             NavItemId.RUN: RunPage(config_store=config_store, library_store=library_store, profile_store=profile_store),
-            NavItemId.PROFILES: ProfilesPage(profile_store=profile_store, library_store=library_store),
             NavItemId.SETTINGS: SettingsPage(),
             NavItemId.DIAGNOSTICS: DiagnosticsPage(),
         }
-
         for page in self._pages.values():
             self.stack.addWidget(page)
             # Wire page-initiated navigation requests (e.g. Library → Run).
@@ -92,6 +128,53 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self.navigate(NavItemId.RUN)
 
+    # -- splitter persistence --------------------------------------------------
+
+    def _save_splitter_sizes(self) -> None:
+        self._settings.setValue("sizes", self._splitter.sizes())
+
+    def _restore_splitter_sizes(self) -> None:
+        saved = self._settings.value("sizes")
+        if saved is not None:
+            try:
+                sizes = [int(s) for s in saved]
+                if len(sizes) == 3:
+                    self._splitter.setSizes(sizes)
+            except (ValueError, TypeError):
+                pass
+
+    # -- inspector visibility --------------------------------------------------
+
+    def set_inspector_visible(self, visible: bool) -> None:
+        """Toggle the inspector panel and adjust splitter sizes accordingly."""
+        if visible:
+            self.inspector.show()
+            sizes = self._splitter.sizes()
+            # If inspector is zero-width, restore it to default
+            if sizes[2] < theme.INSPECTOR_MIN_WIDTH:
+                sizes[2] = theme.INSPECTOR_DEFAULT_WIDTH
+                self._splitter.setSizes(sizes)
+        else:
+            self.inspector.hide()
+            sizes = self._splitter.sizes()
+            sizes[2] = 0
+            self._splitter.setSizes(sizes)
+
+    def _set_inspector_collapsed(self, collapsed: bool) -> None:
+        """Collapse/expand the inspector content while keeping it in the splitter."""
+        if collapsed:
+            sizes = self._splitter.sizes()
+            sizes[2] = 0
+            self._splitter.setSizes(sizes)
+            self.inspector._do_collapse()
+        else:
+            sizes = self._splitter.sizes()
+            sizes[2] = theme.INSPECTOR_DEFAULT_WIDTH
+            self._splitter.setSizes(sizes)
+            self.inspector._on_expand()
+
+    # -- navigation ------------------------------------------------------------
+
     def navigate(self, item_id: NavItemId) -> None:
         page = self._pages[item_id]
         self.stack.setCurrentWidget(page)
@@ -99,6 +182,18 @@ class MainWindow(QMainWindow):
         title = item_id.value.title()
         self.title.setText(title)
         self.subtitle.setText(page.property("subtitle") or "")
+
+        # PagePolicy drives inspector visibility
+        policy = getattr(page, "policy", PagePolicy.STANDARD)
+        if policy == PagePolicy.FULL_WIDTH:
+            self.set_inspector_visible(False)
+        elif policy == PagePolicy.INSPECTOR_OPTIONAL:
+            self.set_inspector_visible(True)
+            self._set_inspector_collapsed(True)
+        else:
+            self.set_inspector_visible(True)
+            self._set_inspector_collapsed(False)
+
         if item_id in {NavItemId.RUN, NavItemId.LIBRARY, NavItemId.PROFILES} and hasattr(page, "_refresh"):
             page._refresh()
         if item_id == NavItemId.LIBRARY:

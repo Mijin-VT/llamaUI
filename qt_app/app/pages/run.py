@@ -1,6 +1,8 @@
 from __future__ import annotations
-
-from PySide6.QtCore import QTimer, Signal
+import os
+from pathlib import Path
+import uuid
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -11,9 +13,13 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QSpinBox,
     QDoubleSpinBox,
-    QToolBox,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QInputDialog,
+    QMessageBox,
+    QTabWidget,
+    QToolButton,
 )
 
 from llama_data import ConfigStore, LibraryStore, ModelProfile, PROFILE_PRESETS, ProfileStore
@@ -32,14 +38,17 @@ from ..services.option_schema import (
 )
 from ..services.runtime import LlamaServerController, ServerState, build_argv
 from ..services.runtime_api import LlamaServerApiClient
-from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton
-from ..widgets.cards import Card, CardTitle, FieldTile
+from ..widgets.buttons import DangerButton, FilterPill, SecondaryButton, SuccessButton
+from ..widgets.cards import Card, CardTitle, FieldTile, OptionCard
+from ..widgets.flow import FlowLayout
+from ..widgets.slider_spin import SliderDoubleSpinBox, SliderSpinBox
 from .base import PageBase
 
 MAIN_OPTION_IDS = [
-    "ctx_size", "cache_type_k", "cache_type_v", "no_kv_offload",
-    "n_gpu_layers", "threads", "batch_size", "ubatch_size",
-    "parallel", "host", "port", "temp", "top_k", "top_p", "repeat_penalty",
+    "ctx_size", "cache_type_k", "cache_type_v", "no_kv_offload", "flash_attn",
+    "n_gpu_layers", "jinja", "reasoning", "reasoning_budget",
+    "threads", "batch_size", "ubatch_size", "parallel",
+    "host", "port", "temp", "top_k", "top_p", "repeat_penalty",
 ]
 
 # Parser group slugs → display names for toolbox headers.
@@ -92,6 +101,25 @@ def _group_display(group: str) -> str:
     return _GROUP_DISPLAY.get(group, group.replace("_", " ").title())
 
 
+def _model_combo_label(model) -> str:
+    """Build ``name · quant · size · provider`` for the Run model dropdown."""
+    from ..services.library_scan import infer_quant as _infer
+    name = model.path.rsplit("/", 1)[-1] or model.id
+    quant = model.quant or _infer(model.path) or "—"
+    size_val = model.size_bytes
+    if size_val is not None:
+        if size_val >= 1024 ** 3:
+            size = f"{size_val / (1024 ** 3):.1f} GB"
+        elif size_val >= 1024 ** 2:
+            size = f"{size_val / (1024 ** 2):.0f} MB"
+        else:
+            size = f"{size_val} B"
+    else:
+        size = "—"
+    provider = model.hf_repo or "local"
+    return f"{name} · {quant} · {size} · {provider}"
+
+
 class RunPage(PageBase):
     inspector_changed = Signal(dict)
     def __init__(
@@ -108,9 +136,11 @@ class RunPage(PageBase):
         self._models: list = []
         self._profiles: list = []
         self._editors: dict[str, QWidget] = {}
+        self._option_cards: dict[str, OptionCard] = {}
         self._schema: RuntimeSchema | None = None
         self._schema_options_by_id: dict[str, RuntimeOption] = {}
         self._schema_cache = SchemaCache()
+        self._mmproj_warning: QLabel | None = None
         super().__init__(parent)
 
     def build(self) -> None:
@@ -172,6 +202,7 @@ class RunPage(PageBase):
 
         row = QHBoxLayout()
         self.model_combo = QComboBox(hero)
+        self.model_combo.setObjectName("ModelPicker")
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.profile_combo = QComboBox(hero)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
@@ -180,22 +211,31 @@ class RunPage(PageBase):
         row.addWidget(QLabel("Profile", hero))
         row.addWidget(self.profile_combo, 1)
         layout.addLayout(row)
-
-        actions = QHBoxLayout()
         save = SuccessButton("Save Profile", hero); save.clicked.connect(self._save_profile)
         save_as = SecondaryButton("Save As", hero); save_as.clicked.connect(self._save_profile_as)
         duplicate = SecondaryButton("Duplicate", hero); duplicate.clicked.connect(self._duplicate_profile)
         reset = DangerButton("Reset", hero); reset.clicked.connect(self._reset_form_to_profile)
         self.preset_combo = QComboBox(hero); self.preset_combo.addItems(["Preset…", *[p.name for p in PROFILE_PRESETS]])
         apply_preset = SecondaryButton("Apply Preset", hero); apply_preset.clicked.connect(self._apply_preset_from_combo)
+        reset_defaults = SecondaryButton("Reset to defaults", hero); reset_defaults.clicked.connect(self._reset_to_defaults)
         start = SuccessButton("Start", hero); start.clicked.connect(self._start)
         stop = DangerButton("Stop", hero); stop.clicked.connect(self._stop)
         restart = SecondaryButton("Restart", hero); restart.clicked.connect(self._restart)
         switch = SecondaryButton("Load via API / Restart fallback", hero); switch.clicked.connect(self._switch_model)
-        for widget in (save, save_as, duplicate, reset, self.preset_combo, apply_preset, start, stop, restart, switch):
-            actions.addWidget(widget)
-        actions.addStretch(1)
-        layout.addLayout(actions)
+
+        # Two action rows: primary on top (Start/Stop/Restart/Switch), metadata on bottom.
+        primary_actions = QHBoxLayout()
+        for widget in (start, stop, restart, switch):
+            primary_actions.addWidget(widget)
+        primary_actions.addStretch(1)
+
+        meta_actions = QHBoxLayout()
+        for widget in (save, save_as, duplicate, reset, self.preset_combo, apply_preset, reset_defaults):
+            meta_actions.addWidget(widget)
+        meta_actions.addStretch(1)
+
+        layout.addLayout(primary_actions)
+        layout.addLayout(meta_actions)
 
         stats = QHBoxLayout()
         self.state_tile = FieldTile("State", "stopped", hero)
@@ -231,28 +271,67 @@ class RunPage(PageBase):
 
     def _build_main_settings(self) -> None:
         card = Card(self._body)
-        layout = QGridLayout(card)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setHorizontalSpacing(10)
-        layout.setVerticalSpacing(8)
-
-        row = 0
-        for option_id in MAIN_OPTION_IDS:
+        layout.setSpacing(12)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        for i, option_id in enumerate(MAIN_OPTION_IDS[:16]):
             catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
             if catalog_opt is None:
                 continue
             # When schema is loaded, only show options the binary supports
             if self._schema and option_id not in self._schema_options_by_id:
                 continue
-
-            label = QLabel(_option_label(catalog_opt), card)
-            label.setToolTip(catalog_opt.help_text)
+            row = i // 2
+            col = i % 2
+            option_card = OptionCard(
+                label=catalog_opt.label,
+                flag=catalog_opt.flag,
+                importance=catalog_opt.importance,
+                parent=card,
+            )
+            option_card.setToolTip(catalog_opt.help_text)
             widget = self._make_editor(catalog_opt, card)
             self._editors[option_id] = widget
-            layout.addWidget(label, row, 0)
-            layout.addWidget(widget, row, 1)
-            row += 1
-
+            option_card.add_editor(widget)
+            grid.addWidget(option_card, row, col)
+        layout.addLayout(grid)
+        # Raw extra args — overflow main options + extra_args if present
+        raw_extra_ids = list(MAIN_OPTION_IDS[16:])
+        if "extra_args" not in raw_extra_ids and "extra_args" not in set(MAIN_OPTION_IDS):
+            raw_extra_ids.append("extra_args")
+        raw_extras: list[tuple[str, LlamaOption]] = []
+        for option_id in raw_extra_ids:
+            catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
+            if catalog_opt is None:
+                continue
+            if self._schema and option_id not in self._schema_options_by_id:
+                continue
+            raw_extras.append((option_id, catalog_opt))
+        if raw_extras:
+            heading = QLabel("Raw extra args", card)
+            heading.setObjectName("CardTitle")
+            layout.addWidget(heading)
+            extras_row = QHBoxLayout()
+            extras_row.setSpacing(10)
+            for option_id, catalog_opt in raw_extras:
+                option_card = OptionCard(
+                    label=catalog_opt.label,
+                    flag=catalog_opt.flag,
+                    importance=catalog_opt.importance,
+                    parent=card,
+                )
+                option_card.setToolTip(catalog_opt.help_text)
+                widget = self._make_editor(catalog_opt, card)
+                self._editors[option_id] = widget
+                option_card.add_editor(widget)
+                extras_row.addWidget(option_card)
+            extras_row.addStretch(1)
+            layout.addLayout(extras_row)
         self._layout.addWidget(card)
 
     def _build_advanced_groups(self) -> None:
@@ -260,20 +339,140 @@ class RunPage(PageBase):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
-        layout.addWidget(CardTitle("Advanced groups", card))
-        toolbox = QToolBox(card)
-
+        header_row = QWidget(card)
+        header_layout = QHBoxLayout(header_row)
+        header_layout.setContentsMargins(16, 6, 16, 6)
+        header_layout.setSpacing(6)
+        self._advanced_toggle_btn = QToolButton(header_row)
+        self._advanced_toggle_btn.setText("Advanced groups")
+        self._advanced_toggle_btn.setCheckable(True)
+        self._advanced_toggle_btn.setChecked(True)
+        self._advanced_toggle_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._advanced_toggle_btn.setArrowType(Qt.DownArrow)
+        self._advanced_toggle_btn.setObjectName("AdvancedToggleBtn")
+        self._advanced_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Search + filter pill: moved out of the body so they stay visible
+        # even when the panel is collapsed (so the user can find/filter
+        # options when re-opening).
+        self.arg_search = QLineEdit(header_row)
+        self.arg_search.setObjectName("ArgumentSearchBox")
+        self.arg_search.setPlaceholderText("Search arguments…")
+        self.arg_search.setClearButtonEnabled(True)
+        self.arg_search.textChanged.connect(self._apply_argument_filter)
+        self.arg_filter_changed = FilterPill("Only changed", header_row)
+        self.arg_filter_changed.toggled.connect(self._apply_argument_filter)
+        header_layout.addWidget(self._advanced_toggle_btn)
+        header_layout.addWidget(self.arg_search)
+        header_layout.addWidget(self.arg_filter_changed)
+        # The body of the card (just the QTabWidget.)
+        self._advanced_body = QWidget(card)
+        body_layout = QVBoxLayout(self._advanced_body)
+        body_layout.setContentsMargins(16, 0, 16, 14)
+        body_layout.setSpacing(8)
+        self._advanced_tabs = QTabWidget(self._advanced_body)
+        self._advanced_tabs.setUsesScrollButtons(True)
+        self._advanced_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        # When the tab changes, the QTabWidget's sizeHint changes. We hook
+        # a 1-shot QTimer so the sizeHint recompute happens after the
+        # QTabWidget actually updates its geometry.
+        self._advanced_tabs.currentChanged.connect(self._refit_advanced_panel)
+        self._option_cards.clear()
         handled = set(MAIN_OPTION_IDS)
-
         if self._schema:
-            self._build_schema_advanced(toolbox, handled)
+            self._build_schema_advanced(self._advanced_tabs, handled)
         else:
-            self._build_catalog_advanced(toolbox, handled)
-
-        layout.addWidget(toolbox)
+            self._build_catalog_advanced(self._advanced_tabs, handled)
+        body_layout.addWidget(self._advanced_tabs)
+        self._advanced_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        # Wire the toggle: clicked on the body (not the toolbar widgets
+        # inside the header) to expand/collapse.
+        def _toggle_advanced(checked: bool) -> None:
+            self._advanced_body.setVisible(checked)
+            self._advanced_toggle_btn.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+            self._refit_advanced_panel()
+        self._advanced_toggle_btn.toggled.connect(_toggle_advanced)
+        layout.addWidget(header_row)
+        layout.addWidget(self._advanced_body)
         self._layout.addWidget(card)
+    def _refit_advanced_panel(self) -> None:
+        """Resize the advanced card to fit the **active** tab's content.
 
-    def _build_schema_advanced(self, toolbox: QToolBox, handled: set[str]) -> None:
+        Each tab page is sized independently. Inactive pages are squashed
+        to 0 px so the QTabWidget sizes itself to only the active page
+        plus its tab bar.
+        """
+
+        def _do() -> None:
+            try:
+                if not self._advanced_tabs:
+                    return
+                active_index = self._advanced_tabs.currentIndex()
+                if active_index < 0:
+                    return
+                page = self._advanced_tabs.widget(active_index)
+                if page is None:
+                    return
+
+                # Ensure the page layout has settled at its current width.
+                inner_layout = page.layout()
+                if inner_layout is not None:
+                    inner_layout.activate()
+
+                # Height the active page needs to show all its content.
+                h = page.minimumSizeHint().height()
+                if h < 80:
+                    h = 80
+
+                # Set every page: active gets its natural height,
+                # inactive are squashed to 0 so the QTabWidget ignores
+                # them when computing its own size.
+                for i in range(self._advanced_tabs.count()):
+                    p = self._advanced_tabs.widget(i)
+                    if p is None:
+                        continue
+                    if i == active_index:
+                        p.setMinimumHeight(h)
+                        p.setMaximumHeight(h)
+                    else:
+                        p.setMinimumHeight(0)
+                        p.setMaximumHeight(0)
+
+                # QTabWidget height = tab bar + active page.
+                tab_bar_h = self._advanced_tabs.tabBar().height()
+                tabs_h = tab_bar_h + h
+
+                # Body height = tabs widget + body layout margins.
+                body_layout = self._advanced_body.layout()
+                body_m = body_layout.contentsMargins()
+                body_h = tabs_h + body_m.top() + body_m.bottom()
+                self._advanced_body.setMinimumHeight(body_h)
+                self._advanced_body.setMaximumHeight(body_h)
+
+                # Card height = header + body + spacing + card margins.
+                card = self._advanced_body.parentWidget()
+                if card is not None:
+                    card_layout = card.layout()
+                    card_m = card_layout.contentsMargins()
+                    header = card_layout.itemAt(0).widget()
+                    header_h = header.height() if header else 0
+                    card_h = (
+                        body_h
+                        + header_h
+                        + card_layout.spacing()
+                        + card_m.top()
+                        + card_m.bottom()
+                    )
+                    card.setMinimumHeight(card_h)
+                    card.setMaximumHeight(card_h)
+            except Exception:
+                return
+
+        # Defer the recompute: the QTabWidget emits currentChanged BEFORE
+        # the new page's layout has been recomputed. QTimer.singleShot(0)
+        # schedules the call for after the current event.
+        QTimer.singleShot(0, _do)
+
+    def _build_schema_advanced(self, tabs: QTabWidget, handled: set[str]) -> None:
         """Build advanced groups from the parsed runtime schema."""
         groups: dict[str, list[RuntimeOption]] = {}
         for rt_opt in self._schema.options:
@@ -283,71 +482,114 @@ class RunPage(PageBase):
 
         # Preserve catalog group order, then append any extra groups
         group_order = list(LLAMA_OPTION_CATALOG.groups_in_order())
-        extra = LLAMA_OPTION_CATALOG.get("extra_args")
-        if extra is not None and "extra_args" not in handled:
-            box = QWidget(toolbox)
-            grid = QGridLayout(box)
-            grid.setContentsMargins(8, 8, 8, 8)
-            label = QLabel(_option_label(extra), box)
-            label.setToolTip(extra.help_text)
-            widget = self._make_editor(extra, box)
-            self._editors[extra.id] = widget
-            grid.addWidget(label, 0, 0)
-            grid.addWidget(widget, 0, 1)
-            toolbox.addItem(box, "Raw extra args")
         for g in groups:
             if g not in group_order:
                 group_order.append(g)
+
+        extra = LLAMA_OPTION_CATALOG.get("extra_args")
+        if extra is not None and "extra_args" not in handled:
+            tab_page = QWidget(tabs)
+            grid = QGridLayout(tab_page)
+            grid.setContentsMargins(8, 8, 8, 8)
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(8)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            tab_page.setMinimumHeight(0)
+            tab_page.setMaximumHeight(16777215)
+            tab_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            option_card = OptionCard(
+                label=extra.label,
+                flag=extra.flag,
+                importance=extra.importance,
+                parent=tab_page,
+            )
+            option_card.setToolTip(extra.help_text)
+            widget = self._make_editor(extra, tab_page)
+            self._editors[extra.id] = widget
+            option_card.add_editor(widget)
+            self._option_cards[extra.id] = option_card
+            grid.addWidget(option_card, 0, 0)
+            tabs.addTab(tab_page, "Raw extra args")
 
         for group_name in group_order:
             options = groups.get(group_name, [])
             if not options:
                 continue
-            box = QWidget(toolbox)
-            grid = QGridLayout(box)
+            tab_page = QWidget(tabs)
+            grid = QGridLayout(tab_page)
             grid.setContentsMargins(8, 8, 8, 8)
             grid.setHorizontalSpacing(10)
-            grid.setVerticalSpacing(4)
-            row = 0
-            for rt_opt in options:
+            grid.setVerticalSpacing(8)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            tab_page.setMinimumHeight(0)
+            tab_page.setMaximumHeight(16777215)
+            tab_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            for idx, rt_opt in enumerate(options):
                 catalog_opt = LLAMA_OPTION_CATALOG.get(rt_opt.id)
                 if catalog_opt is not None:
-                    lbl = QLabel(_option_label(catalog_opt), box)
-                    lbl.setToolTip(catalog_opt.help_text)
-                    widget = self._make_editor(catalog_opt, box)
+                    option_card = OptionCard(
+                        label=catalog_opt.label,
+                        flag=catalog_opt.flag,
+                        importance=catalog_opt.importance,
+                        parent=tab_page,
+                    )
+                    option_card.setToolTip(catalog_opt.help_text)
+                    widget = self._make_editor(catalog_opt, tab_page)
                 else:
-                    lbl = QLabel(_schema_option_label(rt_opt), box)
-                    lbl.setToolTip(rt_opt.description)
-                    widget = self._make_schema_editor(rt_opt, box)
+                    option_card = OptionCard(
+                        label=rt_opt.label or rt_opt.flag,
+                        flag=rt_opt.flag,
+                        importance=0,
+                        parent=tab_page,
+                    )
+                    option_card.setToolTip(rt_opt.description)
+                    widget = self._make_schema_editor(rt_opt, tab_page)
                 self._editors[rt_opt.id] = widget
-                grid.addWidget(lbl, row, 0)
-                grid.addWidget(widget, row, 1)
-                row += 1
-            if row > 0:
-                toolbox.addItem(box, f"{_group_display(group_name)} ({row})")
+                if rt_opt.id == "mmproj":
+                    option_card.add_editor(self._wrap_mmproj_editor(widget, tab_page))
+                else:
+                    option_card.add_editor(widget)
+                self._option_cards[rt_opt.id] = option_card
+                row, col = divmod(idx, 2)
+                grid.addWidget(option_card, row, col)
+            tabs.addTab(tab_page, _group_display(group_name))
 
-    def _build_catalog_advanced(self, toolbox: QToolBox, handled: set[str]) -> None:
+    def _build_catalog_advanced(self, tabs: QTabWidget, handled: set[str]) -> None:
         """Build advanced groups from the static catalog (fallback)."""
         for group in LLAMA_OPTION_CATALOG.groups_in_order():
-            box = QWidget(toolbox)
-            grid = QGridLayout(box)
+            options = [o for o in LLAMA_OPTION_CATALOG.by_group(group) if o.id not in handled]
+            if not options:
+                continue
+            tab_page = QWidget(tabs)
+            grid = QGridLayout(tab_page)
             grid.setContentsMargins(8, 8, 8, 8)
             grid.setHorizontalSpacing(10)
-            grid.setVerticalSpacing(4)
-            row = 0
-            for option in LLAMA_OPTION_CATALOG.by_group(group):
-                if option.id in handled:
-                    continue
-                lbl = QLabel(_option_label(option), box)
-                lbl.setToolTip(option.help_text)
-                lbl.setWordWrap(True)
-                widget = self._make_editor(option, box)
+            grid.setVerticalSpacing(8)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            tab_page.setMinimumHeight(0)
+            tab_page.setMaximumHeight(16777215)
+            tab_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            for idx, option in enumerate(options):
+                option_card = OptionCard(
+                    label=option.label,
+                    flag=option.flag,
+                    importance=option.importance,
+                    parent=tab_page,
+                )
+                option_card.setToolTip(option.help_text)
+                widget = self._make_editor(option, tab_page)
                 self._editors[option.id] = widget
-                grid.addWidget(lbl, row, 0)
-                grid.addWidget(widget, row, 1)
-                row += 1
-            if row > 0:
-                toolbox.addItem(box, f"{_group_display(group)} ({row})")
+                if option.id == "mmproj":
+                    option_card.add_editor(self._wrap_mmproj_editor(widget, tab_page))
+                else:
+                    option_card.add_editor(widget)
+                self._option_cards[option.id] = option_card
+                row, col = divmod(idx, 2)
+                grid.addWidget(option_card, row, col)
+            tabs.addTab(tab_page, _group_display(group))
 
     def _build_logs(self) -> None:
         logs = Card(self._body)
@@ -390,56 +632,120 @@ class RunPage(PageBase):
         if option.kind is OptionKind.BOOLEAN:
             w = QCheckBox(parent)
             w.setChecked(bool(default))
-            w.toggled.connect(self._update_command_preview)
+            w.toggled.connect(self._on_editor_changed)
             return w
         if option.kind is OptionKind.INTEGER:
-            w = QSpinBox(parent)
-            w.setRange(-1_000_000, 1_000_000)
-            w.setValue(int(default or 0))
-            w.valueChanged.connect(self._update_command_preview)
-            return w
-        if option.kind is OptionKind.FLOAT:
-            w = QDoubleSpinBox(parent)
-            w.setDecimals(3)
-            w.setRange(-1000.0, 1000.0)
-            w.setValue(float(default or 0.0))
-            w.valueChanged.connect(self._update_command_preview)
-            return w
-        w = QLineEdit(parent)
-        w.setText(str(default or ""))
-        w.textChanged.connect(self._update_command_preview)
-        return w
-
-    def _make_schema_editor(self, rt_opt: RuntimeOption, parent: QWidget) -> QWidget:
-        """Create a typed editor for a non-curated schema option."""
-        default = rt_opt.default
-        if rt_opt.kind == "boolean":
-            w = QCheckBox(parent)
-            if default is not None:
-                w.setChecked(default.lower() in ("true", "1", "yes"))
-            return w
-        if rt_opt.kind == "integer":
-            w = QSpinBox(parent)
-            w.setRange(-1_000_000, 1_000_000)
+            if option.min_value is not None and option.max_value is not None:
+                w = SliderSpinBox(int(option.min_value), int(option.max_value), parent)
+            else:
+                w = QSpinBox(parent)
+                w.setRange(0, 1_000_000)
+            if option.step is not None:
+                w.setSingleStep(int(option.step))
             if default is not None:
                 try:
                     w.setValue(int(default))
                 except (ValueError, TypeError):
                     pass
+            w.setMinimumWidth(180)
+            w.valueChanged.connect(self._on_editor_changed)
             return w
-        if rt_opt.kind == "float":
-            w = QDoubleSpinBox(parent)
-            w.setDecimals(3)
-            w.setRange(-1000.0, 1000.0)
+        if option.kind is OptionKind.FLOAT:
+            if option.min_value is not None and option.max_value is not None:
+                w = SliderDoubleSpinBox(float(option.min_value), float(option.max_value), parent=parent)
+            else:
+                w = QDoubleSpinBox(parent)
+                w.setDecimals(3)
+                w.setRange(0.0, 1000.0)
+            if option.step is not None:
+                w.setSingleStep(float(option.step))
             if default is not None:
                 try:
                     w.setValue(float(default))
                 except (ValueError, TypeError):
                     pass
+            w.setMinimumWidth(180)
+            w.valueChanged.connect(self._on_editor_changed)
+            return w
+        # STRING / STRING_LIST — use QComboBox if enum_values are defined.
+        if option.enum_values:
+            w = QComboBox(parent)
+            w.addItem("(unset)", None)
+            for value, label in option.enum_values:
+                w.addItem(label, value)
+            # Set default if present.
+            if default is not None:
+                idx = w.findData(default)
+                if idx >= 0:
+                    w.setCurrentIndex(idx)
+            w.currentIndexChanged.connect(self._on_editor_changed)
             return w
         w = QLineEdit(parent)
+        w.setText(str(default or ""))
+        # Most text fields are short (numbers, enums), but a few are
+        # file paths (mmproj, chat-template) that can exceed 64
+        # characters easily. The legacy 64-char cap was too tight for
+        # real-world paths.
+        w.setMaxLength(1024)
+        w.textChanged.connect(self._on_editor_changed)
+        w.setMinimumWidth(120)
+        return w
+
+    def _make_schema_editor(self, rt_opt: RuntimeOption, parent: QWidget) -> QWidget:
+        """Create a typed editor for a non-curated schema option.
+
+        For QLineEdit, the default value goes in the placeholder so the
+        editor starts empty — that way ``_settings_from_form`` can tell
+        "user has not touched this field" (empty text → no flag) apart
+        from "user has typed the default" (non-empty text → emit flag).
+        For numeric/boolean editors, the editor cannot be empty, so the
+        default is the initial value and a flag/value pair will always
+        be emitted by ``_settings_from_form``; that pair is filtered at
+        build time by ``clean_raw_args``.
+        """
+        default = rt_opt.default
+        if rt_opt.kind == "boolean":
+            w = QCheckBox(parent)
+            if default is not None:
+                w.setChecked(default.lower() in ("true", "1", "yes"))
+            w.toggled.connect(self._on_editor_changed)
+            return w
+        if rt_opt.kind == "integer":
+            w = SliderSpinBox(-1_000_000, 1_000_000, parent)
+            w.setMinimumWidth(180)
+            if default is not None:
+                try:
+                    w.setValue(int(default))
+                except (ValueError, TypeError):
+                    pass
+            w.valueChanged.connect(self._on_editor_changed)
+            return w
+        if rt_opt.kind == "float":
+            w = SliderDoubleSpinBox(-1000.0, 1000.0, parent=parent)
+            w.setMinimumWidth(180)
+            if default is not None:
+                try:
+                    w.setValue(float(default))
+                except (ValueError, TypeError):
+                    pass
+            w.valueChanged.connect(self._on_editor_changed)
+            return w
+        # STRING with enum_values → dropdown. (We pass None as the
+        # default so the form starts in the "unset" state.)
+        if rt_opt.kind == "string" and getattr(rt_opt, "enum_values", None):
+            w = QComboBox(parent)
+            w.addItem("(unset)", None)
+            for value, label in rt_opt.enum_values:
+                w.addItem(label, value)
+            w.setMinimumWidth(120)
+            w.currentIndexChanged.connect(self._on_editor_changed)
+            return w
+        w = QLineEdit(parent)
+        w.setMaxLength(1024)
+        w.setMinimumWidth(120)
         if default is not None:
-            w.setText(str(default))
+            w.setPlaceholderText(str(default))
+        w.textChanged.connect(self._on_editor_changed)
         return w
 
     # ------------------------------------------------------------------
@@ -454,8 +760,13 @@ class RunPage(PageBase):
         if option.kind is OptionKind.FLOAT:
             return float(widget.value())
         if option.kind is OptionKind.STRING_LIST:
+            if isinstance(widget, QComboBox):
+                return widget.currentData()
             text = widget.text().strip()
             return [part for part in text.split() if part]
+        # STRING: enum combobox or free-form line edit.
+        if isinstance(widget, QComboBox):
+            return widget.currentData()
         return widget.text().strip() or None
 
     def _schema_editor_value(self, rt_opt: RuntimeOption, widget: QWidget):
@@ -465,6 +776,8 @@ class RunPage(PageBase):
             return int(widget.value())
         if rt_opt.kind == "float":
             return float(widget.value())
+        if isinstance(widget, QComboBox):
+            return widget.currentData()
         return widget.text().strip() or None
 
     def _set_editor_value(self, option: LlamaOption, widget: QWidget, value) -> None:
@@ -474,7 +787,24 @@ class RunPage(PageBase):
             widget.setValue(int(value or 0))
         elif option.kind is OptionKind.FLOAT:
             widget.setValue(float(value or 0.0))
-        else:
+        elif option.kind is OptionKind.STRING_LIST:
+            # Render a list of strings as space-separated, so the
+            # editor shows ``--api-prefix /v1`` rather than the
+            # Python repr ``['--api-prefix', '/v1']``. ``_editor_value``
+            # reverses this on read.
+            if isinstance(widget, QLineEdit):
+                if isinstance(value, (list, tuple)):
+                    widget.setText(" ".join(str(v) for v in value))
+                else:
+                    widget.setText(str(value or ""))
+                return
+        if isinstance(widget, QComboBox):
+            if value is None:
+                widget.setCurrentIndex(0)
+            else:
+                idx = widget.findData(value)
+                widget.setCurrentIndex(idx if idx >= 0 else 0)
+        elif isinstance(widget, QLineEdit):
             widget.setText(str(value or ""))
 
     def _load_unknown_editor(
@@ -530,37 +860,123 @@ class RunPage(PageBase):
             except (ValueError, TypeError):
                 pass
         elif isinstance(widget, QLineEdit):
-            widget.setText(str(default))
+            # Keep the text empty so the form state reflects "user has
+            # not set this". The placeholder already shows the default.
+            widget.clear()
+
+    def _wrap_mmproj_editor(self, editor: QWidget, parent: QWidget) -> QWidget:
+        """Wrap the mmproj QLineEdit with an inline file-not-found warning label."""
+        wrapper = QWidget(parent)
+        vbox = QVBoxLayout(wrapper)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(2)
+        vbox.addWidget(editor)
+        self._mmproj_warning = QLabel(wrapper)
+        self._mmproj_warning.setStyleSheet("color: #e74c3c; font-size: 11px;")
+        self._mmproj_warning.hide()
+        vbox.addWidget(self._mmproj_warning)
+        editor.textChanged.connect(self._validate_mmproj)
+        return wrapper
+
+    def _on_editor_changed(self) -> None:
+        """Slot connected to every editor signal: refresh preview, dots, and filter."""
+        self._update_command_preview()
+        self._refresh_option_cards()
+
+    def _refresh_option_cards(self) -> None:
+        """Recompute user_set and update red dots + visibility filter."""
+        _, _, user_set = self._settings_from_form()
+        for option_id, card in self._option_cards.items():
+            card.set_changed(option_id in user_set)
+        self._apply_argument_filter()
+
+    def _apply_argument_filter(self) -> None:
+        """Show/hide option cards based on search text and 'Only changed' pill."""
+        search_text = self.arg_search.text().strip().lower()
+        only_changed = self.arg_filter_changed.isChecked()
+        _, _, user_set = self._settings_from_form()
+
+        for option_id, card in self._option_cards.items():
+            visible = True
+
+            if only_changed and option_id not in user_set:
+                visible = False
+
+            if visible and search_text:
+                catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
+                if catalog_opt is not None:
+                    searchable = " ".join(
+                        [
+                            catalog_opt.label.lower(),
+                            catalog_opt.flag.lower(),
+                            _group_display(catalog_opt.group).lower(),
+                            (catalog_opt.help_text or "").lower(),
+                        ]
+                    )
+                else:
+                    rt_opt = self._schema_options_by_id.get(option_id)
+                    if rt_opt is not None:
+                        searchable = " ".join(
+                            [
+                                (rt_opt.label or "").lower(),
+                                rt_opt.flag.lower(),
+                                _group_display(rt_opt.group).lower(),
+                                (rt_opt.description or "").lower(),
+                            ]
+                        )
+                    else:
+                        searchable = option_id.lower()
+
+                if search_text not in searchable:
+                    visible = False
+
+            card.setVisible(visible)
 
     # ------------------------------------------------------------------
     # Settings collection
     # ------------------------------------------------------------------
 
-    def _settings_from_form(self) -> tuple[SettingValueMap, list[str]]:
-        """Collect all editor values into curated settings + raw_args."""
+    def _settings_from_form(self) -> tuple[SettingValueMap, list[str], set[str]]:
+        """Collect all editor values into curated settings + raw_args + user_set."""
         settings = SettingValueMap()
         raw_args: list[str] = []
+        user_set: set[str] = set()
 
         for option_id, widget in self._editors.items():
             catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
             if catalog_opt is not None:
                 value = self._editor_value(catalog_opt, widget)
                 settings = settings.with_value(catalog_opt, value)
-            else:
-                # Unknown schema option → serialize to raw_args
+                # Track which curated options differ from catalog default
+                if catalog_opt.default is not None:
+                    if value != catalog_opt.default.value:
+                        user_set.add(option_id)
+                elif value is not None:
+                    user_set.add(option_id)
+                # Unknown schema option → serialize to raw_args.
+                # Empty QLineEdit text means "user has not set this";
+                # the build-time clean_raw_args will drop the resulting
+                # flag/value pair if it matches a natural default.
                 rt_opt = self._schema_options_by_id.get(option_id)
                 if rt_opt is None:
                     continue
                 value = self._schema_editor_value(rt_opt, widget)
-                if value is None:
-                    continue
                 if rt_opt.kind == "boolean":
-                    if value:
-                        raw_args.append(rt_opt.flag)
+                    default_on = (
+                        rt_opt.default is not None
+                        and rt_opt.default.lower() in ("true", "1", "yes")
+                    )
+                    if value != default_on:
+                        if value:
+                            raw_args.append(rt_opt.flag)
+                elif rt_opt.kind in ("integer", "float"):
+                    if rt_opt.default is None or str(value) != rt_opt.default:
+                        raw_args.extend([rt_opt.flag, str(value)])
                 else:
-                    raw_args.extend([rt_opt.flag, str(value)])
+                    if value is not None and value != "":
+                        raw_args.extend([rt_opt.flag, str(value)])
 
-        return settings, raw_args
+        return settings, raw_args, user_set
 
     # ------------------------------------------------------------------
     # Selection state
@@ -577,6 +993,39 @@ class RunPage(PageBase):
     def _on_model_changed(self) -> None:
         self._persist_selection()
         self._reload_profiles()
+        self._auto_populate_mmproj()
+
+    def _auto_populate_mmproj(self) -> None:
+        model = self._selected_model()
+        editor = self._editors.get("mmproj")
+        if editor is None:
+            return
+        if model and model.mmproj_path:
+            editor.setText(model.mmproj_path)
+            profile = self._selected_profile()
+            if profile is not None:
+                profile.user_set.add("mmproj")
+                self.profile_store.upsert(profile)
+            self.status.setText(f"Auto-detected mmproj: {Path(model.mmproj_path).name}")
+        else:
+            editor.clear()
+            profile = self._selected_profile()
+            if profile is not None and "mmproj" in profile.user_set:
+                profile.user_set.discard("mmproj")
+                self.profile_store.upsert(profile)
+        self._validate_mmproj()
+        self._update_command_preview()
+
+    def _validate_mmproj(self) -> None:
+        editor = self._editors.get("mmproj")
+        if editor is None or getattr(self, "_mmproj_warning", None) is None:
+            return
+        path_str = editor.text().strip()
+        if path_str and not Path(path_str).exists():
+            self._mmproj_warning.setText("File not found")
+            self._mmproj_warning.show()
+        else:
+            self._mmproj_warning.hide()
 
     def _on_profile_changed(self) -> None:
         self._persist_selection()
@@ -600,11 +1049,13 @@ class RunPage(PageBase):
     # ------------------------------------------------------------------
 
     def _reload_models(self) -> None:
-        self._models = self.library_store.load()
+        self._models = sorted(
+            self.library_store.load(), key=lambda m: m.path.casefold()
+        )
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         for model in self._models:
-            self.model_combo.addItem(model.path.rsplit("/", 1)[-1], model.id)
+            self.model_combo.addItem(_model_combo_label(model), model.id)
 
         # Restore selection from config
         try:
@@ -664,6 +1115,7 @@ class RunPage(PageBase):
             else:
                 self._load_unknown_editor(option_id, widget, profile)
         self._update_command_preview()
+        self._refresh_option_cards()
 
     def _effective_host_port(self) -> tuple[str, int]:
         config = self.config_store.load()
@@ -678,54 +1130,143 @@ class RunPage(PageBase):
         return host, port
 
     # ------------------------------------------------------------------
-    # Profile save
-    # ------------------------------------------------------------------
-
     def _save_profile(self) -> None:
         model = self._selected_model()
-        profile = self._selected_profile()
         if not model:
             self.status.setText("Select a model first.")
             return
-        if profile is None:
-            import uuid
-            profile = ModelProfile(id=str(uuid.uuid4()), model_id=model.id, name="Run profile")
-        settings, raw_args = self._settings_from_form()
-        profile.settings = settings
-        profile.raw_args = raw_args
-        self.profile_store.upsert(profile)
+        profile = self._selected_profile()
+        settings, raw_args, user_set = self._settings_from_form()
+        if profile is not None:
+            if profile.model_id != model.id:
+                self.status.setText("Profile belongs to a different model. Use Save As.")
+                self._save_profile_as()
+                return
+            profile.settings = settings
+            profile.raw_args = raw_args
+            profile.user_set = user_set
+            self.profile_store.upsert(profile)
+            self.status.setText(f"Saved {profile.name}.")
+        else:
+            profile = ModelProfile(
+                id=str(uuid.uuid4()),
+                model_id=model.id,
+                name="Default",
+                is_default=True,
+                settings=settings,
+                raw_args=raw_args,
+                user_set=user_set,
+            )
+            self.profile_store.upsert(profile)
+            self._reload_profiles()
+            self.status.setText(f"Saved Default profile for {Path(model.path).stem}.")
         cfg = self.config_store.load()
         cfg.selected_profile_id = profile.id
         self.config_store.save(cfg)
-        self._reload_profiles()
-        self.status.setText("Profile saved from Run page.")
         self._update_command_preview()
 
+    def _suggest_profile_name(self, model) -> str:
+        base = os.path.splitext(os.path.basename(model.path))[0]
+        parts = base.rsplit("-", 1)
+        if len(parts) == 2 and "_" in parts[1]:
+            return f"{parts[0]} ({parts[1]})"
+        return base
 
     def _save_profile_as(self) -> None:
         model = self._selected_model()
         if not model:
             self.status.setText("Select a model first.")
             return
-        import uuid
-        profile = ModelProfile(id=str(uuid.uuid4()), model_id=model.id, name="Run profile copy")
-        settings, raw_args = self._settings_from_form()
-        profile.settings = settings
-        profile.raw_args = raw_args
+        current = self._selected_profile()
+        suggestion = (
+            f"{current.name} (copy)"
+            if current is not None
+            else self._suggest_profile_name(model)
+        )
+        name, ok = QInputDialog.getText(
+            self, "Save profile as", "Profile name:", text=suggestion
+        )
+        if not ok:
+            self.status.setText("Save As cancelled.")
+            return
+        name = name.strip()
+        if not name:
+            self.status.setText("Profile name cannot be empty.")
+            return
+        existing_for_model = self.profile_store.list_for_model(model.id)
+        match = next((p for p in existing_for_model if p.name == name), None)
+        if match is not None:
+            reply = QMessageBox.question(
+                self,
+                "Overwrite profile?",
+                f"A profile named '{name}' already exists for this model. Overwrite?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                self.status.setText("Save As cancelled.")
+                return
+        self._save_profile_as_with_name(name, force_overwrite=True)
+
+    def _save_profile_as_with_name(self, name: str, force_overwrite: bool = True) -> None:
+        model = self._selected_model()
+        if not model:
+            self.status.setText("Select a model first.")
+            return
+        existing = self.profile_store.list_for_model(model.id)
+        match = next((p for p in existing if p.name == name), None)
+        if match is not None and not force_overwrite:
+            reply = QMessageBox.question(
+                self,
+                "Overwrite?",
+                f"A profile named '{name}' already exists. Overwrite?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply == QMessageBox.No:
+                self.status.setText("Save As cancelled.")
+                return
+        settings, raw_args, user_set = self._settings_from_form()
+        if match is not None:
+            profile = match
+            profile.settings = settings
+            profile.raw_args = raw_args
+            profile.user_set = user_set
+        else:
+            profile = ModelProfile(
+                id=str(uuid.uuid4()),
+                model_id=model.id,
+                name=name,
+                settings=settings,
+                raw_args=raw_args,
+                user_set=user_set,
+            )
         self.profile_store.upsert(profile)
         cfg = self.config_store.load()
         cfg.selected_profile_id = profile.id
         self.config_store.save(cfg)
         self._reload_profiles()
-        self.status.setText("Profile saved as new copy.")
+        # Select the newly-saved profile
+        for i, p in enumerate(self._profiles):
+            if p.id == profile.id:
+                self.profile_combo.setCurrentIndex(i)
+                break
+        self.status.setText(f"Profile saved as '{name}'.")
+        self._update_command_preview()
 
     def _duplicate_profile(self) -> None:
         profile = self._selected_profile()
         if profile is None:
             self._save_profile_as()
             return
-        import uuid
-        dup = ModelProfile(id=str(uuid.uuid4()), model_id=profile.model_id, name=f"{profile.name} copy", settings=profile.settings.copy(), raw_args=list(profile.raw_args), preset_origin=profile.preset_origin, schema_version=profile.schema_version)
+        dup = ModelProfile(
+            id=str(uuid.uuid4()),
+            model_id=profile.model_id,
+            name=f"{profile.name} copy",
+            settings=profile.settings.copy(),
+            raw_args=list(profile.raw_args),
+            preset_origin=profile.preset_origin,
+            schema_version=profile.schema_version,
+            user_set=set(profile.user_set),
+        )
         self.profile_store.upsert(dup)
         cfg = self.config_store.load()
         cfg.selected_profile_id = dup.id
@@ -736,6 +1277,25 @@ class RunPage(PageBase):
     def _reset_form_to_profile(self) -> None:
         self._load_profile_into_form()
         self.status.setText("Run editor reset to saved/default values.")
+
+    def _reset_to_defaults(self) -> None:
+        """Reset all editors to catalog defaults and clear user_set."""
+        for option_id, widget in self._editors.items():
+            catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
+            if catalog_opt is not None:
+                default_val = catalog_opt.default.to_json() if catalog_opt.default else None
+                self._set_editor_value(catalog_opt, widget, default_val)
+            else:
+                rt_opt = self._schema_options_by_id.get(option_id)
+                if rt_opt and rt_opt.default is not None:
+                    self._set_schema_editor_default(rt_opt, widget)
+        profile = self._selected_profile()
+        if profile is not None:
+            profile.user_set = set()
+            self.profile_store.upsert(profile)
+        self.status.setText("All options reset to catalog defaults.")
+        self._update_command_preview()
+        self._refresh_option_cards()
 
     def _apply_preset_from_combo(self) -> None:
         name = self.preset_combo.currentText()
@@ -754,6 +1314,7 @@ class RunPage(PageBase):
                 self._set_editor_value(option, widget, value.to_json())
         self.status.setText(f"Applied preset: {name}.")
         self._update_command_preview()
+        self._refresh_option_cards()
     # ------------------------------------------------------------------
     # Argv / command preview
     # ------------------------------------------------------------------
@@ -764,14 +1325,41 @@ class RunPage(PageBase):
         profile = self._selected_profile()
         if model is None:
             raise RuntimeError("No model selected. Add a model in Library first.")
+        # IMPORTANT: do not mutate ``profile`` here. This method is
+        # called from ``_set_editor_value`` during ``_load_profile_into_form``
+        # (and from any editor's ``textChanged``). Mutating the profile
+        # overwrites earlier editors' values with the form's current
+        # (still-being-populated) state, dropping fields that come
+        # later in the iteration. Read the form into a fresh local
+        # model and pass that to ``build_argv``; the profile is
+        # only updated by the explicit Save action.
         if profile is not None:
-            settings, raw_args = self._settings_from_form()
-            profile.settings = settings
-            profile.raw_args = raw_args
+            settings, raw_args, user_set = self._settings_from_form()
+            preview_profile = ModelProfile(
+                id=profile.id,
+                model_id=profile.model_id,
+                name=profile.name,
+                settings=settings,
+                raw_args=raw_args,
+                user_set=user_set,
+                preset_origin=profile.preset_origin,
+                schema_version=profile.schema_version,
+                is_default=profile.is_default,
+                last_used_at=profile.last_used_at,
+                created_at=profile.created_at,
+                updated_at=profile.updated_at,
+            )
         else:
-            settings, raw_args = self._settings_from_form()
-            profile = ModelProfile(id="__ephemeral__", model_id=model.id, name="Unsaved", settings=settings, raw_args=raw_args)
-        return build_argv(config, model, profile)
+            settings, raw_args, user_set = self._settings_from_form()
+            preview_profile = ModelProfile(
+                id="__ephemeral__",
+                model_id=model.id,
+                name="Unsaved",
+                settings=settings,
+                raw_args=raw_args,
+                user_set=user_set,
+            )
+        return build_argv(config, model, preview_profile)
 
     def _update_command_preview(self) -> None:
         try:
@@ -892,6 +1480,9 @@ class RunPage(PageBase):
                 continue
             rendered.append(f"{line.timestamp} [{line.source}] {line.text}")
         self.logs.setPlainText("\n".join(rendered[-1000:]))
+        cursor = self.logs.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.logs.setTextCursor(cursor)
 
     def _copy_logs(self) -> None:
         text = self.logs.toPlainText()

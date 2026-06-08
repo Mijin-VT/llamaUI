@@ -17,14 +17,11 @@ This is the control center.
 
 - **Pick a model** from your library.
 - **Edit its launch arguments** through a form UI that mirrors `llama-server --help`. The app can either parse the actual `--help` output from your binary (so it stays current with whatever llama.cpp version you have) or fall back to a static catalog.
-- **Save profiles** per-model. Each profile stores its own set of arguments. You can also apply presets like "Conservative CPU", "Balanced GPU", or "Low Memory" with one click.
+- **Save profiles** per-model directly in the Run page. Each profile stores its own set of arguments. Create, duplicate, reset, or apply presets like "Conservative CPU", "Balanced GPU", or "Low Memory" with one click.
 - **Start / stop / restart** the server. The process is launched in its own POSIX session group (`start_new_session=True`) so when you hit Stop, `os.killpg` terminates the entire process tree — no orphaned worker threads left behind.
 - **Live logs** with auto-tail scrolling. Filter by stdout/stderr or search the buffer.
 - **Command preview** shows the exact argv that will be passed to llama-server before you start it.
 - **API health** polling. If the server is up, you can switch models via the `/model` endpoint without a full restart (falls back to restart if the endpoint is missing or the model is incompatible).
-
-### Profiles
-Manage per-model saved settings. Create, duplicate, reset, delete, and set default profiles. The profile editor shows a live diff of what settings are changed vs defaults. Profiles are stored as JSON under `~/.local/share/llamaUI/`.
 
 ### Settings
 - Point to your `llama-server` binary.
@@ -97,7 +94,7 @@ On first launch, go to **Settings**, point it at your `llama-server` binary and 
 llamUI/
 ├── qt_app/                 # The actual application
 │   ├── app/
-│   │   ├── pages/          # Library, Discover, Run, Profiles, Settings, Diagnostics
+│   │   ├── pages/          # Library, Discover, Run, Settings, Diagnostics
 │   │   ├── services/       # HF search, download, runtime, scanner, parser
 │   │   ├── widgets/        # Cards, buttons, slider+spinbox, sidebar, inspector
 │   │   ├── main_window.py  # Shell layout

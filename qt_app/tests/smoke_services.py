@@ -20,7 +20,7 @@ from app.services import (  # noqa: E402
     validate_llama_server,
 )
 from llama_data import AppConfig, ConfigStore, LibraryStore, LocalModel, ModelProfile, ProfileStore, default_paths  # noqa: E402
-from app.services.library_scan import ScanResult, infer_quant, scan_library  # noqa: E402
+from app.services.library_scan import ScanResult, infer_quant, is_companion_gguf, scan_library  # noqa: E402
 
 
 def check(condition: bool, message: str) -> None:
@@ -97,6 +97,66 @@ def main() -> int:
         check(infer_quant("model-IQ3_S.gguf") == "IQ3_S", "infer IQ3_S")
         check(infer_quant("plain.gguf") is None, "no quant for plain filename")
 
+    # Phase 7a: companion GGUF filter
+    with tempfile.TemporaryDirectory() as td2:
+        comp_dir = Path(td2) / "models"
+        comp_dir.mkdir()
+        (comp_dir / "model.Q4_K_M.gguf").write_bytes(b"\x00" * 512)
+        (comp_dir / "mmproj-model.Q4_K_M.gguf").write_bytes(b"\x00" * 256)
+        (comp_dir / "text-encoder-model.Q4_K_M.gguf").write_bytes(b"\x00" * 256)
+        comp_paths = default_paths(Path(td2) / "lib-data")
+        comp_lib = LibraryStore(comp_paths)
+        result = scan_library(comp_dir, comp_lib)
+        check(result.scanned_files == 1, f"companion scan found 1 gguf, got {result.scanned_files}")
+        check(result.added == 1, f"companion scan added 1, got {result.added}")
+        models = comp_lib.load()
+        check(len(models) == 1, f"companion library has 1 model, got {len(models)}")
+        check(models[0].path.endswith("model.Q4_K_M.gguf"), f"kept primary model, path={models[0].path}")
+
+    # is_companion_gguf unit checks
+    check(is_companion_gguf(Path("mmproj-X.gguf")), "is_companion mmproj")
+    check(is_companion_gguf(Path("text-encoder-X.gguf")), "is_companion text-encoder")
+    check(is_companion_gguf(Path("vision-encoder-X.gguf")), "is_companion vision-encoder")
+    check(is_companion_gguf(Path("embedding-model.gguf")), "is_companion embedding")
+    check(not is_companion_gguf(Path("my_model.gguf")), "normal model not companion")
+    check(not is_companion_gguf(Path("llama_embedding_model.gguf")), "_embedding not companion")
+
+    # Step 0: mmproj_path auto-detection and round-trip
+    with tempfile.TemporaryDirectory() as td3:
+        paths3 = default_paths(Path(td3))
+        models_dir = Path(td3) / "models"
+        models_dir.mkdir()
+        (models_dir / "model.Q4.gguf").write_bytes(b"x")
+        (models_dir / "mmproj-model.fp16.gguf").write_bytes(b"y")
+        lib3 = LibraryStore(paths3)
+        result3 = scan_library(models_dir, lib3)
+        check(result3.added == 1, "scan added model with mmproj")
+        models3 = lib3.load()
+        check(len(models3) == 1, "library has one model with mmproj")
+        check(models3[0].mmproj_path is not None, "mmproj_path is set")
+        check(models3[0].mmproj_path.endswith("mmproj-model.fp16.gguf"), f"mmproj_path correct: {models3[0].mmproj_path}")
+
+    with tempfile.TemporaryDirectory() as td4:
+        paths4 = default_paths(Path(td4))
+        models_dir = Path(td4) / "models"
+        models_dir.mkdir()
+        (models_dir / "model.Q4.gguf").write_bytes(b"x")
+        lib4 = LibraryStore(paths4)
+        result4 = scan_library(models_dir, lib4)
+        check(result4.added == 1, "scan added model without mmproj")
+        models4 = lib4.load()
+        check(len(models4) == 1, "library has one model without mmproj")
+        check(models4[0].mmproj_path is None, "mmproj_path is None when no companion")
+
+    # Round-trip
+    m = LocalModel(id="a", path="a.gguf", mmproj_path="mmproj.gguf")
+    check(m.to_json().get("mmproj_path") == "mmproj.gguf", "to_json writes mmproj_path")
+    m2 = LocalModel(id="b", path="b.gguf")
+    check("mmproj_path" not in m2.to_json(), "to_json omits None mmproj_path")
+    m3 = LocalModel.from_json({"id": "c", "path": "c.gguf", "companion_paths": ["mmproj-c.gguf"]})
+    check(m3.mmproj_path == "mmproj-c.gguf", "from_json infers mmproj_path from companion_paths")
+    m4 = LocalModel.from_json({"id": "d", "path": "d.gguf"})
+    check(m4.mmproj_path is None, "from_json leaves mmproj_path None when no companion")
     return 0
 
 

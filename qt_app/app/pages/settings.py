@@ -24,11 +24,12 @@ from ..services.dialogs import pick_directory, pick_file
 from ..services.option_schema import build_runtime_schema
 from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton
 from ..widgets.cards import Card, CardTitle, Chip
-from .base import PageBase
+from .base import PageBase, PagePolicy
 
 
 class SettingsPage(PageBase):
     """Settings page with real ConfigStore persistence."""
+    policy = PagePolicy.INSPECTOR_OPTIONAL
 
     def __init__(self, parent=None) -> None:
         self._config_store = ConfigStore.default()
@@ -124,17 +125,19 @@ class SettingsPage(PageBase):
 
         host_label = QLabel("Host", card)
         host_label.setObjectName("Muted")
+        host_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(host_label, 0, 0)
         self._host_input = QLineEdit(card)
         self._host_input.setText(self._config.host if self._config else "127.0.0.1")
-        grid.addWidget(self._host_input, 0, 1)
-
+        self._host_input.setMaximumWidth(320)
         port_label = QLabel("Port", card)
         port_label.setObjectName("Muted")
+        port_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(port_label, 1, 0)
         self._port_input = QSpinBox(card)
         self._port_input.setRange(1, 65535)
         self._port_input.setValue(self._config.port if self._config else 8080)
+        self._port_input.setMaximumWidth(320)
         grid.addWidget(self._port_input, 1, 1)
 
         layout.addLayout(grid)
@@ -153,7 +156,10 @@ class SettingsPage(PageBase):
         self._global_temp = QDoubleSpinBox(card); self._global_temp.setDecimals(3); self._global_temp.setRange(0.0, 10.0)
         fields = [("Threads", self._global_threads, "threads"), ("Batch size", self._global_batch, "batch_size"), ("GPU layers", self._global_gpu_layers, "n_gpu_layers"), ("Temperature", self._global_temp, "temp")]
         for row, (label, widget, option_id) in enumerate(fields):
-            grid.addWidget(QLabel(label, card), row, 0)
+            lbl = QLabel(label, card)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(lbl, row, 0)
+            widget.setMaximumWidth(320)
             grid.addWidget(widget, row, 1)
             value = self._config.global_settings.get(option_id) if self._config else None
             if value is not None and value.value is not None:

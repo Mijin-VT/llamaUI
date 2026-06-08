@@ -13,6 +13,7 @@ from .llama_options import (
     PRESET_LOW_MEMORY,
     SettingValueMap,
     apply_preset_to_settings,
+    clean_raw_args,
     default_settings_from_catalog,
 )
 from .models import AppConfig, HfTokenSource, LocalModel, ModelProfile
@@ -41,8 +42,8 @@ __all__ = [
     "PRESET_LOW_MEMORY",
     "SettingValueMap",
     "apply_preset_to_settings",
+    "clean_raw_args",
     "default_settings_from_catalog",
-    "AppConfig",
     "ConfigStore",
     "HfTokenSource",
     "LocalModel",

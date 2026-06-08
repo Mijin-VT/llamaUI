@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QSizePolicy, QVBoxLayout
 
 from llama_data import ConfigStore
 from llama_data.models import AppConfig
@@ -13,7 +13,7 @@ from ..services.hugging_face import check_hf_connectivity
 from ..services.option_schema import build_runtime_schema
 from ..widgets.buttons import SecondaryButton
 from ..widgets.cards import Card, CardTitle, Chip
-from .base import PageBase
+from .base import PageBase, PagePolicy
 
 
 def _fmt(value: object) -> str:
@@ -36,6 +36,7 @@ def _resolve_hf_token(config: AppConfig) -> tuple[Optional[str], str]:
 
 
 class DiagnosticsPage(PageBase):
+    policy = PagePolicy.FULL_WIDTH
     def __init__(self, config_store: ConfigStore | None = None, parent=None):
         self.config_store = config_store or ConfigStore.default()
         super().__init__(parent)
@@ -72,6 +73,7 @@ class DiagnosticsPage(PageBase):
         layout.addWidget(self._fw_summary)
         self._fw_details = QPlainTextEdit(card)
         self._fw_details.setReadOnly(True)
+        self._fw_details.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._fw_details)
         self._layout.addWidget(card)
 
@@ -88,10 +90,10 @@ class DiagnosticsPage(PageBase):
         self._bin_summary.setWordWrap(True)
         row.addWidget(self._bin_summary, 1)
         layout.addLayout(row)
-
         self._bin_details = QPlainTextEdit(card)
         self._bin_details.setReadOnly(True)
         self._bin_details.setMaximumHeight(160)
+        self._bin_details.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._bin_details)
 
         self._layout.addWidget(card)
@@ -126,9 +128,12 @@ class DiagnosticsPage(PageBase):
         self._hf_detail.setWordWrap(True)
         layout.addWidget(self._hf_detail)
 
+        refresh_row = QHBoxLayout()
+        refresh_row.addStretch(1)
         refresh = SecondaryButton("Refresh", card)
         refresh.clicked.connect(self._refresh)
-        layout.addWidget(refresh)
+        refresh_row.addWidget(refresh)
+        layout.addLayout(refresh_row)
 
         self._layout.addWidget(card)
 

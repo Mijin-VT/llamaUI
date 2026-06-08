@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
 )
 
@@ -25,7 +26,6 @@ class NavItemId(str, Enum):
     LIBRARY = "library"
     DISCOVER = "discover"
     RUN = "run"
-    PROFILES = "profiles"
     SETTINGS = "settings"
     DIAGNOSTICS = "diagnostics"
 
@@ -34,7 +34,6 @@ _NAV_LABELS: Dict[NavItemId, str] = {
     NavItemId.LIBRARY: "Library",
     NavItemId.DISCOVER: "Discover",
     NavItemId.RUN: "Run",
-    NavItemId.PROFILES: "Profiles",
     NavItemId.SETTINGS: "Settings",
     NavItemId.DIAGNOSTICS: "Diagnostics",
 }
@@ -48,7 +47,8 @@ class Sidebar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(theme.SIDEBAR_WIDTH)
+        self.setMinimumWidth(theme.SIDEBAR_MIN_WIDTH)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

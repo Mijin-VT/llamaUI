@@ -33,12 +33,69 @@ def infer_quant(filename: str) -> Optional[str]:
     match = _QUANT_RE.search(filename)
     return match.group(1).upper() if match else None
 
+
+# Substrings that identify companion / non-runnable GGUF files.
+_COMPANION_PREFIXES = (
+    "mmproj-", "mmproj.",
+    "text-encoder-", "text-encoder.",
+    "vision-encoder-", "vision-encoder.",
+)
+
+
+def _is_companion_name(lower_name: str) -> bool:
+    """True if *lower_name* (already lowercased) matches a companion GGUF pattern."""
+    for prefix in _COMPANION_PREFIXES:
+        if prefix in lower_name:
+            return True
+    # "embedding" substring, but NOT when preceded by "_".
+    if "embedding" in lower_name:
+        idx = 0
+        while True:
+            pos = lower_name.find("embedding", idx)
+            if pos == -1:
+                break
+            if pos == 0 or lower_name[pos - 1] != "_":
+                return True
+            idx = pos + len("embedding")
+    return False
+
+
+def is_companion_gguf(path: Path) -> bool:
+    """True for mmproj, text-encoder, vision-encoder, and embedding GGUFs."""
+    return _is_companion_name(path.name.lower())
+
+def _companions_for_path(path: Path) -> list[str]:
+    """Return all companion GGUFs in the same directory as *path*."""
+    out: list[str] = []
+    try:
+        for child in path.parent.iterdir():
+            if child.suffix.lower() == ".gguf" and is_companion_gguf(child):
+                out.append(str(child.resolve()))
+    except OSError:
+        pass
+    out.sort()
+    return out
+
+
+def _mmproj_for_path(path: Path) -> Optional[str]:
+    """Return the first mmproj-*.gguf file in the same directory, or None."""
+    try:
+        for child in path.parent.iterdir():
+            if child.suffix.lower() == ".gguf" and child.name.lower().startswith("mmproj-"):
+                return str(child.resolve())
+    except OSError:
+        pass
+    return None
+
+
 def _is_primary_runnable_gguf(path: Path) -> bool:
     name = path.name.lower()
     if re.search(r"-\d{5}-of-\d{5}\.gguf$", name):
         return name.endswith("-00001-of-0000" + name.split("-of-")[-1][0] + ".gguf") if False else name.endswith("-00001-of-00001.gguf") or "-00001-of-" in name
     if re.search(r"\.part\d+\.gguf$", name):
         return ".part1.gguf" in name or ".part01.gguf" in name or ".part001.gguf" in name
+    if _is_companion_name(name):
+        return False
     return True
 
 
@@ -109,18 +166,23 @@ def scan_library(
         filename = resolved_path.name
         quant = infer_quant(filename)
 
+        quant = infer_quant(filename)
+        companions = _companions_for_path(resolved_path)
+        mmproj = _mmproj_for_path(resolved_path)
+
         if resolved_str in existing:
             old = existing[resolved_str]
             # Preserve all HF metadata; update local fields only.
-            changed = False
             updates: dict = {}
             if old.size_bytes != size_bytes:
                 updates["size_bytes"] = size_bytes
-                changed = True
             if old.quant != quant and quant is not None:
                 updates["quant"] = quant
-                changed = True
-            if changed:
+            if old.companion_paths != companions:
+                updates["companion_paths"] = companions
+            if old.mmproj_path != mmproj:
+                updates["mmproj_path"] = mmproj
+            if updates:
                 from dataclasses import asdict
                 fields = asdict(old)
                 fields.update(updates)
@@ -135,6 +197,8 @@ def scan_library(
                 path=str(resolved_path),
                 size_bytes=size_bytes,
                 quant=quant,
+                companion_paths=companions,
+                mmproj_path=mmproj,
             )
             existing[resolved_str] = model
             added += 1
@@ -227,6 +291,7 @@ def open_hf(hf_repo: Optional[str]) -> None:
 __all__ = [
     "ScanResult",
     "infer_quant",
+    "is_companion_gguf",
     "open_hf",
     "read_card_cache",
     "reveal_file",

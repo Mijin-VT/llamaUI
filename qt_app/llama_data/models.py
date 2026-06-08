@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .llama_options import LLAMA_OPTION_CATALOG, SettingValueMap
+from .llama_options import LLAMA_OPTION_CATALOG, SettingValueMap, clean_raw_args
 
 
 def utc_now() -> str:
@@ -71,6 +71,12 @@ class AppConfig:
         )
 
 
+def _first_mmproj(companion_paths: list[str]) -> Optional[str]:
+    for p in companion_paths:
+        if Path(p).name.lower().startswith("mmproj-"):
+            return p
+    return None
+
 @dataclass
 class LocalModel:
     id: str
@@ -88,6 +94,7 @@ class LocalModel:
     gated: bool = False
     private: bool = False
     companion_paths: list[str] = field(default_factory=list)
+    mmproj_path: Optional[str] = None
     last_used_at: Optional[str] = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
@@ -99,8 +106,10 @@ class LocalModel:
         return cls(id=str(p.resolve()), path=str(p), size_bytes=size)
 
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
-
+        d = asdict(self)
+        if d.get("mmproj_path") is None:
+            d.pop("mmproj_path", None)
+        return d
     @classmethod
     def from_json(cls, data: Any) -> "LocalModel":
         if not isinstance(data, dict):
@@ -109,8 +118,9 @@ class LocalModel:
         cleaned = {k: v for k, v in data.items() if k in allowed}
         cleaned.setdefault("tags", [])
         cleaned.setdefault("companion_paths", [])
+        if "mmproj_path" not in cleaned or cleaned.get("mmproj_path") is None:
+            cleaned["mmproj_path"] = _first_mmproj(cleaned.get("companion_paths", []))
         return cls(**cleaned)
-
 
 @dataclass
 class ModelProfile:
@@ -125,6 +135,7 @@ class ModelProfile:
     last_used_at: Optional[str] = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+    user_set: set[str] = field(default_factory=set)
 
     def touch(self) -> None:
         self.updated_at = utc_now()
@@ -142,25 +153,42 @@ class ModelProfile:
             "last_used_at": self.last_used_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "user_set": sorted(self.user_set),
         }
 
     @classmethod
     def from_json(cls, data: Any) -> "ModelProfile":
         if not isinstance(data, dict):
             raise ValueError("invalid ModelProfile")
+        settings = SettingValueMap.from_json(data.get("settings") or {}, LLAMA_OPTION_CATALOG)
+        raw_user_set = data.get("user_set")
+        if raw_user_set is not None:
+            user_set = set(raw_user_set)
+        else:
+            # Migration: old profile without user_set — infer from settings
+            user_set: set[str] = set()
+            for opt_id, value in settings.items():
+                opt = LLAMA_OPTION_CATALOG.get(opt_id)
+                if opt is None:
+                    continue
+                if opt.default is not None and value.value == opt.default.value:
+                    continue
+                user_set.add(opt_id)
+        # Migration: also clean raw_args of pre-Section-6 round-trip noise.
+        raw_args = clean_raw_args(list(data.get("raw_args") or []))
         return cls(
             id=str(data["id"]),
             model_id=str(data["model_id"]),
             name=str(data.get("name") or "Default"),
-            settings=SettingValueMap.from_json(data.get("settings") or {}, LLAMA_OPTION_CATALOG),
-            raw_args=list(data.get("raw_args") or []),
+            settings=settings,
+            raw_args=raw_args,
             preset_origin=data.get("preset_origin"),
             schema_version=data.get("schema_version"),
             is_default=bool(data.get("is_default", False)),
             last_used_at=data.get("last_used_at"),
             created_at=str(data.get("created_at") or utc_now()),
             updated_at=str(data.get("updated_at") or utc_now()),
+            user_set=user_set,
         )
-
 
 __all__ = ["AppConfig", "HfTokenSource", "LocalModel", "ModelProfile", "utc_now"]
