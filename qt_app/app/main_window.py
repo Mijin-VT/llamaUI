@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
             self.set_inspector_visible(True)
             self._set_inspector_collapsed(False)
 
-        if item_id in {NavItemId.RUN, NavItemId.LIBRARY, NavItemId.PROFILES} and hasattr(page, "_refresh"):
+        if item_id in {NavItemId.RUN, NavItemId.LIBRARY} and hasattr(page, "_refresh"):
             page._refresh()
         if item_id == NavItemId.LIBRARY:
             discover = self._pages.get(NavItemId.DISCOVER)

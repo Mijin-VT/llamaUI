@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import uuid
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,

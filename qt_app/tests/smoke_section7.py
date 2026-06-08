@@ -2,7 +2,6 @@
 
 Verifies:
 - LibraryPage has a model_picker QComboBox with objectName "ModelPicker".
-- ProfilesPage has a model_picker QComboBox with objectName "ModelPicker".
 - RunPage's model_combo has objectName "ModelPicker".
 """
 from __future__ import annotations
@@ -17,7 +16,7 @@ for candidate in (REPO_ROOT, QT_ROOT):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from llama_data import AppConfig, ConfigStore, LibraryStore, LocalModel, ModelProfile, ProfileStore, default_paths  # noqa: E402
+from llama_data import AppConfig, ConfigStore, LibraryStore, LocalModel, ProfileStore, default_paths  # noqa: E402
 
 
 def check(condition: bool, message: str) -> None:
@@ -51,7 +50,6 @@ def main() -> int:
         ))
 
         profile_store = ProfileStore(paths)
-        profile_store.upsert(ModelProfile(id="p1", model_id="primary-1", name="Default"))
 
         # -- LibraryPage --
         from app.pages.library import LibraryPage
@@ -67,17 +65,6 @@ def main() -> int:
         # but here we inserted both — the combo shows all loaded models).
         count = lib_page.model_picker.count()
         check(count >= 1, f"LibraryPage model_picker has >= 1 items, got {count}")
-
-        # -- ProfilesPage --
-        from app.pages.profiles import ProfilesPage
-        prof_page = ProfilesPage(
-            profile_store=profile_store,
-            library_store=library_store,
-            config_store=config_store,
-        )
-        check(hasattr(prof_page, "model_picker"), "ProfilesPage has model_picker")
-        check(isinstance(prof_page.model_picker, QComboBox), "ProfilesPage model_picker is QComboBox")
-        check(prof_page.model_picker.objectName() == "ModelPicker", "ProfilesPage model_picker objectName == ModelPicker")
 
         # -- RunPage --
         from app.pages.run import RunPage
