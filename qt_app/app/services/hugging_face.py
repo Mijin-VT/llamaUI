@@ -105,8 +105,12 @@ class HuggingFaceSearchService:
             if exc.code == 429:
                 return HfSearchOutcome.error("HuggingFace rate limit reached. Try again later.")
             return HfSearchOutcome.error(f"HuggingFace HTTP {exc.code}: {exc.reason}")
+        except (urllib.error.URLError, OSError) as exc:
+            # Avoid echoing the full URL (which contains the search query
+            # and any repo IDs the user typed) back into the UI.
+            return HfSearchOutcome.error(f"HuggingFace request failed: {exc.reason if hasattr(exc, 'reason') and exc.reason else 'network error'}")
         except Exception as exc:
-            return HfSearchOutcome.error(str(exc))
+            return HfSearchOutcome.error(f"HuggingFace search failed: {type(exc).__name__}")
 
     def _headers(self) -> dict[str, str]:
         headers = {"User-Agent": "llamaUI-qt/0.1"}
@@ -284,16 +288,6 @@ def _is_split(name: str) -> bool:
     return bool(re.search(r"-\d{5}-of-\d{5}\.gguf$", lower) or re.search(r"\.part\d+\.gguf$", lower))
 
 
-_default_service: HfSearchService = HuggingFaceSearchService()
-
-
-def get_search_service() -> HfSearchService:
-    return _default_service
-
-
-def set_search_service(service: HfSearchService) -> None:
-    global _default_service
-    _default_service = service
 
 
 
@@ -345,5 +339,4 @@ __all__ = [
     "NotImplementedHfSearchService",
     "check_hf_connectivity",
     "compute_hardware_fit",
-    "set_search_service",
 ]

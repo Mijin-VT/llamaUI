@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import shutil
 import tempfile
 import time
 import urllib.error
-import re
 import urllib.request
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
+
+from PySide6.QtCore import QObject, QThread, Qt, Signal
 
 from llama_data.models import LocalModel, utc_now
 from llama_data.stores import LibraryStore
@@ -332,11 +335,6 @@ def _build_local_model(req: HfDownloadRequest, dest_path: Path) -> LocalModel:
     )
 
 # ---------------------------------------------------------------------------
-# Concurrent download manager
-# ---------------------------------------------------------------------------
-
-from collections import deque
-from PySide6.QtCore import QObject, QThread, Qt, Signal
 
 
 _MAX_CONCURRENT_DOWNLOADS = 3

@@ -29,6 +29,7 @@ from llama_data.llama_options import (
     LlamaOption,
     OptionKind,
     SettingValueMap,
+    clean_raw_args,
 )
 
 from ..services.option_schema import (
@@ -977,7 +978,7 @@ class RunPage(PageBase):
                     if value is not None and value != "":
                         raw_args.extend([rt_opt.flag, str(value)])
 
-        return settings, raw_args, user_set
+        return settings, clean_raw_args(raw_args), user_set
 
     # ------------------------------------------------------------------
     # Selection state

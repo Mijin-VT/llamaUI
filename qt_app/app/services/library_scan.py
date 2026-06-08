@@ -1,22 +1,21 @@
 """Library scan service: scan configured models directory for GGUF files.
 
-Walks the models directory (from AppConfig.models_dir), discovers ``.gguf``
-files, and upserts :class:`LocalModel` entries into :class:`LibraryStore`.
-Existing HF/card metadata is preserved — the scan only fills in local fields
-(path, size, quant inference) for newly discovered files and removes stale
-entries whose files no longer exist on disk.
+Companion-file detection is **filename-based only** — we do not inspect
+the GGUF header. A user who renames ``mmproj-llava.gguf`` to
+``llava-q4.gguf`` will see it appear as a runnable model. The Settings
+page exposes a "Show companion files" toggle for users who want to
+manage these files alongside their primary models.
+
+Adding GGUF-header inspection (reading ``general.file_type`` from the
+metadata) would improve accuracy but is out of scope here.
 """
+
 from __future__ import annotations
-
 import logging
-import os
 import re
-import subprocess
-import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
+from typing import Iterable, Optional
 from llama_data import AppConfig, ConfigStore, LibraryStore, LocalModel
 
 logger = logging.getLogger(__name__)

@@ -128,6 +128,11 @@ class LlamaServerApiClient:
         self.host = host
         self.port = port
         self.timeout = timeout
+        # Cache the /model/load capability probe so the health thread
+        # does not POST a dummy request every second. Invalidated by
+        # constructing a new client (the controller does this on every
+        # ``start``).
+        self._model_load_supported: Optional[bool] = None
 
     @property
     def base_url(self) -> str:
@@ -167,18 +172,24 @@ class LlamaServerApiClient:
     def detect_model_load_support(self) -> bool:
         """Probe whether POST /model/load exists (newer llama-server builds).
 
-        Sends a lightweight probe and checks for non-404 response.
-        Returns False on connection failure or if endpoint returns 404.
+        The result is cached on the client so the health thread does not
+        POST a dummy request every second. The cache is invalidated
+        when a new client is constructed (the controller does this on
+        every ``start``).
         """
+        if self._model_load_supported is not None:
+            return self._model_load_supported
         _, code, err = _post_json(
             f"{self.base_url}/model/load",
             {"model": ""},
             timeout=min(self.timeout, 2.0),
         )
         if code is not None:
-            return code != 404
-        # Connection refused / network error → unknown, conservatively False.
-        return False
+            self._model_load_supported = code != 404
+        else:
+            # Connection refused / network error → unknown, conservatively False.
+            self._model_load_supported = False
+        return self._model_load_supported
 
     # -- status (combined probe) ---------------------------------------------
 

@@ -99,15 +99,10 @@ class MainWindow(QMainWindow):
         # Shared stores so all pages read/write the same persisted state.
         config_store = ConfigStore.default()
         library_store = LibraryStore.default()
-        # One-time cleanup: drop stale companion entries from pre-Phase-11 library.json
-        try:
-            from app.services.library_scan import is_companion_gguf, scan_models_dir
-            if any(is_companion_gguf(Path(m.path)) for m in library_store.load()):
-                library_store.save([])
-                scan_models_dir(config_store, library_store)
-                logging.getLogger(__name__).info("Stale companion entries detected; library rescanned.")
-        except Exception:
-            pass
+        # One-time library cleanup (v1→v2 migration) runs automatically
+        # inside LibraryStore.load(): companion GGUF entries from
+        # pre-Phase-11 scans are stripped and the file is saved at the
+        # current schema version. No inline wipe here.
         profile_store = ProfileStore.default()
 
         self._pages: dict[NavItemId, QWidget] = {

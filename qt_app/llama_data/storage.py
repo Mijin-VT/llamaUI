@@ -16,16 +16,15 @@ with :func:`os.replace`, so a crash mid-write never leaves a half-truncated
 config on disk.
 """
 
-from __future__ import annotations
-
 import json
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-CURRENT_SCHEMA_VERSION: int = 1
+CURRENT_SCHEMA_VERSION: int = 2
 
 
 @dataclass(frozen=True)
@@ -144,6 +143,45 @@ def resolve_version(
     return chain.apply(envelope.version, envelope.data)
 
 
+# -- Cross-process advisory locking -------------------------------------------
+# Two llamaUI processes launched simultaneously would otherwise clobber each
+# other's writes. The stores hold a per-file advisory lock for the full
+# load+save cycle. On Windows the lock is a no-op (single-instance assumed).
+_HAS_FCNTL = sys.platform != "win32"
+if _HAS_FCNTL:
+    import fcntl  # type: ignore[import-not-found]
+
+
+class FileLock:
+    """Advisory file lock used to serialize multi-process access to a store.
+
+    On POSIX this is an ``flock`` on a sidecar ``.lock`` file. On Windows
+    it is a no-op (the app documents single-instance behavior there).
+    The lock is released when the context exits, even on exceptions.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path.with_suffix(path.suffix + ".lock")
+        self._fd: Optional[int] = None
+
+    def __enter__(self) -> "FileLock":
+        if not _HAS_FCNTL:
+            return self
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+        finally:
+            self._fd = None
+
+
 # Module-level helpers used by the migration self-test below.
 def _strip_unknown_keys(payload: Any, allowed: set) -> Any:
     """Recursively drop unknown mapping keys. Used by 0->1 migrations."""
@@ -160,8 +198,8 @@ def identity_migration(payload: Any) -> Any:
 
 
 # Forward-declared migration registry per store. Each store builds its own
-# ``MigrationChain`` from these. Empty dicts are intentional: stores introduce
-# migrations when they actually need to step data forward.
+# ``MigrationChain`` from these. The library has a real 1→2 migration
+# (drops companion entries); config and profiles use empty dicts.
 EMPTY_MIGRATIONS: Dict[int, Migration] = {}
 
 

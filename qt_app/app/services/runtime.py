@@ -212,6 +212,12 @@ class LlamaServerController:
         self._api_client: Optional[LlamaServerApiClient] = None
         self._health_thread: Optional[threading.Thread] = None
         self._stop_health = threading.Event()
+        # Each ``start`` increments ``_log_session``. Reader threads capture
+        # the session id at spawn time; ``_emit`` drops lines whose
+        # session does not match the current one, so stale log output
+        # from a previous process can never bleed into the new log
+        # buffer after a restart.
+        self._log_session = 0
 
 
     def _status_copy_unlocked(self) -> RuntimeStatus:
@@ -246,6 +252,10 @@ class LlamaServerController:
             if not is_port_available(host, port):
                 raise RuntimeError(f"port {host}:{port} is already in use")
 
+            # Bump the log session so any in-flight reader threads from a
+            # previous process stop contributing to the (just-cleared)
+            # log buffer. See _start_reader / _emit.
+            self._log_session += 1
             self.log_buffer.clear()
             self._status = RuntimeStatus(
                 state=ServerState.STARTING,
@@ -275,8 +285,8 @@ class LlamaServerController:
 
             self._status.state = ServerState.RUNNING
             self._status.pid = self._process.pid
-            self._start_reader("stdout", self._process.stdout)
-            self._start_reader("stderr", self._process.stderr)
+            self._start_reader("stdout", self._process.stdout, self._log_session)
+            self._start_reader("stderr", self._process.stderr, self._log_session)
             self._start_health_poll(host, port)
             return self._status_copy_unlocked()
     def stop(
@@ -298,8 +308,8 @@ class LlamaServerController:
            port-already-in-use check, which is the desired
            fail-fast behavior.
         """
-        self._stop_health.set()
         with self._lock:
+            stop_event = self._stop_health
             proc = self._process
             if not proc or proc.poll() is not None:
                 self._status.state = ServerState.STOPPED
@@ -307,15 +317,20 @@ class LlamaServerController:
                 self._status.pid = None
                 self._process = None
                 self._api_client = None
-                return self._status_copy_unlocked()
-            pid = proc.pid
-            self._status.state = ServerState.STOPPING
-            # ``os.getpgid(pid)`` may raise if the process is
-            # already gone; fall back to the pid as a group id.
-            try:
-                pgid = os.getpgid(pid)
-            except ProcessLookupError:
-                pgid = pid
+            return self._status_copy_unlocked()
+        # Signal the health-poll thread to stop. ``stop_event`` is the
+        # per-session event captured above under the lock, so a
+        # concurrent ``_start_health_poll`` cannot replace it from
+        # under us.
+        stop_event.set()
+        pid = proc.pid
+        # ``os.getpgid(pid)`` may raise if the process is already
+        # gone; fall back to the pid as a group id.
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            pgid = pid
+        self._status.state = ServerState.STOPPING
 
         # Helper that sends a signal to the whole process group
         # on POSIX, or falls back to a single-process kill on
@@ -395,13 +410,19 @@ class LlamaServerController:
         return self.start(argv, host, port, model_path, profile_name)
 
     def poll_health(self) -> ApiStatus:
-        """One-shot health check against the running server's API."""
+        """One-shot health check against the running server's API.
+
+        Holds ``self._lock`` for the full sequence so a concurrent
+        ``start`` cannot replace ``_api_client`` and ``_status`` between
+        the read and the write. The lock is also held during the HTTP
+        call (up to ``_HEALTH_TIMEOUT`` seconds), which serializes
+        status updates with server lifecycle changes.
+        """
         with self._lock:
             client = self._api_client
-        if client is None:
-            return ApiStatus(reachable=False, error="no running server")
-        status = client.status()
-        with self._lock:
+            if client is None:
+                return ApiStatus(reachable=False, error="no running server")
+            status = client.status()
             self._status.api_status = status
             if self._status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
                 self._status.state = (
@@ -447,31 +468,45 @@ class LlamaServerController:
             self._status.exit_code = self._process.returncode
             self._status.pid = None
 
-    def _emit(self, line: LogLine) -> None:
+    def _emit(self, line: LogLine, session: int) -> None:
+        # Stale lines from a previous process (reader thread still
+        # draining the old pipe) are dropped here. Without this guard
+        # they would be appended to the new log buffer that ``start``
+        # just cleared.
+        if session != self._log_session:
+            return
         self.log_buffer.append(line)
         if self.on_log:
             self.on_log(line)
 
-    def _start_reader(self, source: str, pipe) -> None:
+    def _start_reader(self, source: str, pipe, session: int) -> None:
         if pipe is None:
             return
 
         def run() -> None:
             for raw in pipe:
-                self._emit(LogLine(source=source, text=raw.rstrip()))
+                self._emit(LogLine(source=source, text=raw.rstrip()), session)
 
         t = threading.Thread(target=run, name=f"llama-server-{source}", daemon=True)
         t.start()
 
     def _start_health_poll(self, host: str, port: int) -> None:
-        self._stop_health.set()
-        self._stop_health.clear()
+        # Use a fresh event per health-poll session instead of clearing a
+        # shared one. ``set()`` followed by ``clear()`` on the same event
+        # is non-atomic: if ``stop()`` fires between them, the old
+        # thread might see the cleared event and continue running
+        # against a stale client. A new event has no such race.
+        old_stop = self._stop_health
+        new_stop = threading.Event()
+        self._stop_health = new_stop
+        if old_stop is not None:
+            old_stop.set()
         self._api_client = LlamaServerApiClient(
             host=host, port=port, timeout=_HEALTH_TIMEOUT
         )
 
         def loop() -> None:
-            while not self._stop_health.wait(_HEALTH_INTERVAL):
+            while not new_stop.wait(_HEALTH_INTERVAL):
                 if self._process and self._process.poll() is not None:
                     return
                 self.poll_health()
