@@ -1,0 +1,260 @@
+"""HTTP API client for local llama-server health, capability, and model switching.
+
+Uses only stdlib ``urllib`` — zero external dependencies.
+All network errors (connection refused, timeout, DNS) are caught and returned
+as structured results.  Callers never see bare exceptions from this module.
+"""
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from dataclasses import asdict, dataclass
+from enum import Enum
+from typing import Any, Optional
+
+
+# ---------------------------------------------------------------------------
+# Data types
+# ---------------------------------------------------------------------------
+
+
+class HealthStatus(str, Enum):
+    OK = "ok"
+    LOADING = "loading"
+    ERROR = "error"
+
+
+@dataclass
+class ApiStatus:
+    """Full health + capability probe result."""
+    reachable: bool
+    health: Optional[str] = None          # raw status string: ok / loading / error
+    model_path: Optional[str] = None
+    total_slots: Optional[int] = None
+    model_load_supported: bool = False
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class SwitchResult:
+    """Result of a model-switch attempt."""
+    switched: bool          # True when API model-load succeeded
+    restart_required: bool  # True when API unavailable; caller must restart
+    unreachable: bool       # True when server is not running
+    message: str = ""
+    new_model: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_TIMEOUT = 3.0
+
+
+def _is_connection_refused(error: str) -> bool:
+    low = error.lower()
+    return "connection refused" in low or "errno 111" in low or "econnrefused" in low
+
+
+def _get_json(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[dict], Optional[str]]:
+    """GET *url*, return ``(parsed_json, None)`` or ``(None, error_string)``."""
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return json.loads(raw), None
+    except (urllib.error.URLError, OSError) as exc:
+        return None, str(exc)
+    except json.JSONDecodeError as exc:
+        return None, f"Invalid JSON: {exc}"
+
+
+def _post_json(
+    url: str,
+    body: dict[str, Any],
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> tuple[Optional[dict], Optional[int], Optional[str]]:
+    """POST JSON to *url*. Returns ``(parsed, status_code, error)``."""
+    try:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                return json.loads(raw), resp.status, None
+            except json.JSONDecodeError:
+                return None, resp.status, None
+    except urllib.error.HTTPError as exc:
+        err_text = ""
+        try:
+            err_text = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return None, exc.code, err_text or str(exc)
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, ConnectionRefusedError):
+            return None, None, f"Connection refused: {exc}"
+        return None, None, str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Public client
+# ---------------------------------------------------------------------------
+
+
+class LlamaServerApiClient:
+    """Stateless client for a local llama-server's HTTP API."""
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    # -- health / status -----------------------------------------------------
+
+    def check_health(self) -> ApiStatus:
+        """GET /health — returns structured status, never raises."""
+        body, err = _get_json(f"{self.base_url}/health", timeout=self.timeout)
+        if err is not None:
+            return ApiStatus(reachable=False, error=err)
+
+        status_str = body.get("status", "error") if isinstance(body, dict) else "error"
+        return ApiStatus(
+            reachable=True,
+            health=status_str,
+            model_path=body.get("model_path") if isinstance(body, dict) else None,
+            total_slots=body.get("total_slots") if isinstance(body, dict) else None,
+        )
+
+    def fetch_props(self) -> ApiStatus:
+        """GET /props — enriches ApiStatus with server properties."""
+        body, err = _get_json(f"{self.base_url}/props", timeout=self.timeout)
+        if err is not None:
+            return ApiStatus(reachable=False, error=err)
+
+        return ApiStatus(
+            reachable=True,
+            health="ok",
+            model_path=body.get("model_path") if isinstance(body, dict) else None,
+            total_slots=body.get("total_slots") if isinstance(body, dict) else None,
+        )
+
+    # -- model load detection ------------------------------------------------
+
+    def detect_model_load_support(self) -> bool:
+        """Probe whether POST /model/load exists (newer llama-server builds).
+
+        Sends a lightweight probe and checks for non-404 response.
+        Returns False on connection failure or if endpoint returns 404.
+        """
+        _, code, err = _post_json(
+            f"{self.base_url}/model/load",
+            {"model": ""},
+            timeout=min(self.timeout, 2.0),
+        )
+        if code is not None:
+            return code != 404
+        # Connection refused / network error → unknown, conservatively False.
+        return False
+
+    # -- status (combined probe) ---------------------------------------------
+
+    def status(self) -> ApiStatus:
+        """Combined health + model-load capability probe."""
+        health = self.check_health()
+        if not health.reachable:
+            return health
+
+        health.model_load_supported = self.detect_model_load_support()
+        return health
+
+    # -- model switching -----------------------------------------------------
+
+    def switch_model(self, model_path: str) -> SwitchResult:
+        """Attempt to hot-switch the model on a running llama-server.
+
+        Strategy:
+        1. Check server is reachable.
+        2. Probe ``/model/load`` for API support.
+        3. POST model path if supported.
+        4. Return ``restart_required`` if API not available.
+        5. Return ``unreachable`` if server is down.
+
+        Never raises — all errors are structured in the result.
+        """
+        # Check reachability first.
+        health = self.check_health()
+        if not health.reachable:
+            return SwitchResult(
+                switched=False,
+                restart_required=False,
+                unreachable=True,
+                message=f"Server unreachable at {self.host}:{self.port}: {health.error}",
+            )
+
+        # Detect API support.
+        if not self.detect_model_load_support():
+            return SwitchResult(
+                switched=False,
+                restart_required=True,
+                unreachable=False,
+                message="Server does not support /model/load API. "
+                        "Stop and restart llama-server with the new model.",
+            )
+
+        # Attempt the switch.
+        body, code, err = _post_json(
+            f"{self.base_url}/model/load",
+            {"model": model_path},
+            timeout=max(self.timeout, 10.0),
+        )
+
+        if code is not None and 200 <= code < 300:
+            loaded = body.get("model") if isinstance(body, dict) else None
+            return SwitchResult(
+                switched=True,
+                restart_required=False,
+                unreachable=False,
+                message="Model switched successfully.",
+                new_model=loaded or model_path,
+            )
+
+        error_detail = err or f"HTTP {code}"
+        if isinstance(body, dict):
+            inner = body.get("error")
+            if isinstance(inner, dict):
+                error_detail = inner.get("message", error_detail)
+            elif isinstance(inner, str):
+                error_detail = inner
+        return SwitchResult(
+            switched=False,
+            restart_required=False,
+            unreachable=False,
+            message=f"Model switch failed: {error_detail}",
+        )
+
+
+__all__ = ["ApiStatus", "HealthStatus", "LlamaServerApiClient", "SwitchResult"]

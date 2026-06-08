@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="960" viewBox="0 0 1536 960">
+  <rect width="1536" height="960" fill="#111827"/>
+  <rect x="0" y="0" width="220" height="960" fill="#0b1220"/>
+  <text x="28" y="42" fill="#a78bfa" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700">llamaUI</text>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="17" fill="#cbd5e1">
+    <text x="28" y="105">Library</text><text x="28" y="155">Discover</text><text x="28" y="205" fill="#ffffff" font-weight="700">Run</text><text x="28" y="255">Profiles</text><text x="28" y="305">Settings</text><text x="28" y="355">Diagnostics</text>
+  </g>
+  <rect x="220" y="0" width="1536" height="74" fill="#182235"/>
+  <text x="250" y="46" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="700">Run local llama-server</text>
+  <rect x="250" y="96" width="820" height="132" rx="12" fill="#1e293b" stroke="#334155"/>
+  <text x="274" y="132" fill="#f8fafc" font-family="Inter" font-size="20" font-weight="700">Qwen3-Coder-Next-Q4_K_M.gguf</text>
+  <text x="274" y="164" fill="#94a3b8" font-family="Inter" font-size="15">Profile: Balanced GPU • saved per model • schema from selected llama-server</text>
+  <rect x="274" y="182" width="124" height="34" rx="7" fill="#6d28d9"/><text x="303" y="205" fill="white" font-family="Inter" font-size="14">Save Profile</text>
+  <rect x="414" y="182" width="138" height="34" rx="7" fill="#334155"/><text x="438" y="205" fill="#e2e8f0" font-family="Inter" font-size="14">Duplicate</text>
+  <g font-family="Inter" font-size="14">
+    <rect x="250" y="250" width="820" height="250" rx="12" fill="#162033" stroke="#334155"/>
+    <text x="274" y="286" fill="#f8fafc" font-size="20" font-weight="700">Main settings</text>
+    <g fill="#0f172a" stroke="#334155">
+      <rect x="274" y="310" width="180" height="64" rx="8"/><rect x="474" y="310" width="180" height="64" rx="8"/><rect x="674" y="310" width="180" height="64" rx="8"/><rect x="874" y="310" width="180" height="64" rx="8"/>
+      <rect x="274" y="392" width="180" height="64" rx="8"/><rect x="474" y="392" width="180" height="64" rx="8"/><rect x="674" y="392" width="180" height="64" rx="8"/><rect x="874" y="392" width="180" height="64" rx="8"/>
+    </g>
+    <g fill="#c4b5fd"><text x="292" y="334">Context --ctx-size</text><text x="492" y="334">KV cache --cache-type-k</text><text x="692" y="334">GPU layers -ngl</text><text x="892" y="334">CPU threads -t</text><text x="292" y="416">Top-P --top-p</text><text x="492" y="416">Top-K --top-k</text><text x="692" y="416">Temperature --temp</text><text x="892" y="416">Parallel --parallel</text></g>
+    <g fill="#f8fafc" font-size="22" font-weight="700"><text x="292" y="360">32768</text><text x="492" y="360">q8_0</text><text x="692" y="360">99</text><text x="892" y="360">16</text><text x="292" y="442">0.95</text><text x="492" y="442">40</text><text x="692" y="442">0.70</text><text x="892" y="442">4</text></g>
+  </g>
+  <rect x="250" y="520" width="820" height="238" rx="12" fill="#1e293b" stroke="#334155"/>
+  <text x="274" y="556" fill="#f8fafc" font-family="Inter" font-size="20" font-weight="700">Advanced groups</text>
+  <g font-family="Inter" font-size="16" fill="#e2e8f0">
+    <text x="274" y="596">▾ Model loading</text><text x="274" y="632">▸ GPU / offload</text><text x="274" y="668">▸ Context / KV cache</text><text x="274" y="704">▸ Server / API</text>
+    <text x="600" y="596">▸ Sampling defaults</text><text x="600" y="632">▸ Multimodal</text><text x="600" y="668">▸ Debug / logging</text><text x="600" y="704">▸ Raw extra args</text>
+  </g>
+  <rect x="1094" y="96" width="292" height="662" rx="12" fill="#162033" stroke="#334155"/>
+  <text x="1118" y="132" fill="#f8fafc" font-family="Inter" font-size="20" font-weight="700">Inspector</text>
+  <text x="1118" y="170" fill="#22c55e" font-family="Inter" font-size="16" font-weight="700">GPU likely</text>
+  <text x="1118" y="205" fill="#cbd5e1" font-family="Inter" font-size="15">VRAM: 24 GB free</text>
+  <text x="1118" y="232" fill="#cbd5e1" font-family="Inter" font-size="15">Server: healthy</text>
+  <text x="1118" y="259" fill="#cbd5e1" font-family="Inter" font-size="15">API model load: detected</text>
+  <rect x="1118" y="294" width="110" height="38" rx="7" fill="#16a34a"/><text x="1150" y="319" fill="white" font-family="Inter" font-size="15">Start</text>
+  <rect x="1240" y="294" width="110" height="38" rx="7" fill="#991b1b"/><text x="1274" y="319" fill="white" font-family="Inter" font-size="15">Stop</text>
+  <rect x="1118" y="350" width="232" height="38" rx="7" fill="#6d28d9"/><text x="1176" y="375" fill="white" font-family="Inter" font-size="15">Load via API</text>
+  <rect x="1118" y="418" width="232" height="170" rx="8" fill="#0f172a" stroke="#334155"/>
+  <text x="1134" y="446" fill="#94a3b8" font-family="monospace" font-size="13">llama-server -m ...</text>
+  <text x="1134" y="470" fill="#94a3b8" font-family="monospace" font-size="13">--ctx-size 32768</text>
+  <text x="1134" y="494" fill="#94a3b8" font-family="monospace" font-size="13">--n-gpu-layers 99</text>
+  <text x="1134" y="518" fill="#94a3b8" font-family="monospace" font-size="13">--top-p 0.95</text>
+  <rect x="250" y="784" width="1136" height="146" rx="12" fill="#020617" stroke="#334155"/>
+  <text x="274" y="818" fill="#f8fafc" font-family="Inter" font-size="18" font-weight="700">Server logs</text>
+  <text x="274" y="852" fill="#94a3b8" font-family="monospace" font-size="14">slot update: processing prompt...</text>
+  <text x="274" y="878" fill="#94a3b8" font-family="monospace" font-size="14">llama server listening at http://127.0.0.1:8080</text>
+</svg>

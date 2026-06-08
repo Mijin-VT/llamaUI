@@ -1,0 +1,42 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# --- Qt / PySide ---
+*.qmlc
+*.jsc
+.qmlls.ini
+
+# --- Tauri / Rust (legacy, left as reference) ---
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/gen/schemas/*
+
+# --- Node (legacy Tauri frontend) ---
+node_modules/
+dist/
+.vite/
+
+# --- App runtime data (created under user config dirs, not in repo) ---
+.llamaUI/
+*.log
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
