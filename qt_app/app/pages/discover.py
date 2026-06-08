@@ -7,10 +7,16 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget
 
-from llama_data import ConfigStore, LibraryStore, default_paths
-from ..services.download_service import DownloadProgress, DownloadService, HfDownloadRequest
+from llama_data import ConfigStore, LibraryStore, LocalModel, default_paths
+from ..services.download_service import (
+    DownloadError,
+    DownloadManager,
+    DownloadProgress,
+    DownloadStatus,
+    HfDownloadRequest,
+)
 from ..services.hugging_face import HfFilter, HfRepoSummary, HuggingFaceSearchService, compute_hardware_fit
-from ..widgets.buttons import FilterPill, SecondaryButton, SuccessButton
+from ..widgets.buttons import FilterPill, SuccessButton
 from ..widgets.cards import Card, CardTitle, DownloadRow
 from .base import PageBase
 
@@ -138,78 +144,6 @@ class _CardWorker(QObject):
         self.finished.emit(text)
 
 
-class _DownloadWorker(QObject):
-    progress = Signal(str, object)  # (filename, DownloadProgress)
-    finished = Signal(object)
-    def __init__(
-        self,
-        repo: HfRepoSummary,
-        file_indices: tuple[int, ...],
-        card_text: str | None,
-        hf_token: str | None = None,
-        config_store: ConfigStore | None = None,
-        library_store: LibraryStore | None = None,
-        parent=None,
-    ):
-        super().__init__(parent)
-        self.repo = repo
-        self.file_indices = file_indices
-        self.card_text = card_text
-        self.hf_token = hf_token
-        self.config_store = config_store or ConfigStore.default()
-        self.library_store = library_store or LibraryStore.default()
-        self._cancel = False
-
-    def cancel(self) -> None:
-        self._cancel = True
-
-    def run(self) -> None:
-        try:
-            config = self.config_store.load()
-            base_dir = Path(config.models_dir).expanduser() if config.models_dir else Path.home() / "Models" / "llamaUI"
-            dest_dir = base_dir / self.repo.repo_id.replace("/", "__")
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            library = self.library_store
-            first_path = None
-            last_path = None
-            for idx in self.file_indices:
-                hf_file = self.repo.files[idx]
-                request = HfDownloadRequest(
-                    repo_id=self.repo.repo_id,
-                    filename=Path(hf_file.name).name,
-                    url=hf_file.download_url or "",
-                    dest_dir=str(dest_dir),
-                    size_bytes=hf_file.size_bytes,
-                    quant=hf_file.quantization,
-                    architecture=self.repo.architecture,
-                    license=self.repo.license,
-                    base_model=self.repo.base_model,
-                    tags=list(self.repo.tags),
-                    gated=self.repo.gated,
-                    private=self.repo.private,
-                    card_text=self.card_text,
-                    companion_paths=[str(dest_dir / Path(self.repo.files[i].name).name) for i in self.file_indices],
-                    cards_dir=str(default_paths().cards_dir),
-                    hf_token=self.hf_token,
-                )
-                model = DownloadService().download(
-                    request,
-                    library,
-                    on_progress=lambda prog, name=Path(hf_file.name).name: self.progress.emit(name, prog),
-                    cancel_check=lambda: self._cancel,
-                )
-                if first_path is None:
-                    first_path = model.path
-                last_path = model.path
-            self.finished.emit(("cancelled", "Download cancelled.") if self._cancel else ("ok", first_path or last_path))
-        except Exception as exc:
-            self.finished.emit(("error", str(exc)))
-
-
-# ---------------------------------------------------------------------------
-# Page
-# ---------------------------------------------------------------------------
-
 
 class DiscoverPage(PageBase):
     navigate_requested = Signal(str)
@@ -221,7 +155,17 @@ class DiscoverPage(PageBase):
         self._selectable: list[_Selectable] = []
         self._threads: list[QThread] = []
         self._card_text = ""
+        self._rows_by_id: dict[str, DownloadRow] = {}
+        self._pending_navigate = False
+
+        # Created before super().__init__ because PageBase calls ``build()``
+        # from inside __init__, and ``build()`` needs the manager available.
+        # We cannot pass ``parent=self`` yet because ``self`` is not a
+        # valid QObject until PageBase's __init__ runs, so we reparent
+        # the manager after super().__init__ completes.
+        self._download_manager = DownloadManager(LibraryStore.default())
         super().__init__(parent)
+        self._download_manager.setParent(self)
 
     def build(self) -> None:
         self.setProperty("subtitle", "HuggingFace GGUF discovery, explicit file selection, and download queue.")
@@ -279,11 +223,7 @@ class DiscoverPage(PageBase):
         self.download_button = SuccessButton("Download selected file", detail)
         self.download_button.clicked.connect(self._download_selected)
         self.download_button.setEnabled(False)
-        self.cancel_button = SecondaryButton("Cancel", detail)
-        self.cancel_button.clicked.connect(self._cancel_download)
-        self.cancel_button.setEnabled(False)
         file_row.addWidget(self.download_button)
-        file_row.addWidget(self.cancel_button)
         d.addLayout(file_row)
 
         self.split_warning = QLabel(detail)
@@ -302,7 +242,13 @@ class DiscoverPage(PageBase):
         q = QVBoxLayout(queue)
         q.setContentsMargins(16, 14, 16, 14)
         q.setSpacing(8)
-        q.addWidget(CardTitle("Download queue", queue))
+        header_row = QHBoxLayout()
+        header_row.addWidget(CardTitle("Download queue", queue))
+        header_row.addStretch(1)
+        self.queue_status = QLabel("0 active · 0 pending", queue)
+        self.queue_status.setObjectName("Muted")
+        header_row.addWidget(self.queue_status)
+        q.addLayout(header_row)
         self.queue_rows: list[DownloadRow] = []
         self.queue_list = QWidget(queue)
         self.queue_list_layout = QVBoxLayout(self.queue_list)
@@ -314,6 +260,12 @@ class DiscoverPage(PageBase):
         q.addWidget(self.queue_empty)
         q.addWidget(self.queue_list)
         self._layout.addWidget(queue)
+
+        # Wire manager signals.
+        self._download_manager.progress.connect(self._on_manager_progress)
+        self._download_manager.status_changed.connect(self._on_manager_status)
+        self._download_manager.finished.connect(self._on_manager_finished)
+        self._download_manager.queue_changed.connect(self._on_queue_changed)
 
     # -- helpers ---------------------------------------------------------------
 
@@ -478,66 +430,119 @@ class DiscoverPage(PageBase):
             return
         entry = self._selectable[idx]
         indices = entry.indices
-        selected_name = entry.label
-        row = self._add_queue_row(f"{repo.repo_id}/{selected_name}")
-        self.download_button.setEnabled(False)
-        self.cancel_button.setEnabled(True)
-        thread = QThread(self)
-        worker = _DownloadWorker(repo, indices, self._card_text, self._token(), config_store=self.config_store, library_store=LibraryStore.default())
-        worker.moveToThread(thread)
-        thread.started.connect(lambda: worker.run(), Qt.ConnectionType.QueuedConnection)
-        worker.progress.connect(self._on_download_progress, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(self._download_finished, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(thread.quit, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(worker.deleteLater, Qt.ConnectionType.QueuedConnection)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
-        self._threads.append(thread)
-        self._active_download_worker = worker
-        self._active_download_row = row
-        thread.start()
 
-    def _add_queue_row(self, label: str) -> DownloadRow:
+        config = self.config_store.load()
+        base_dir = (
+            Path(config.models_dir).expanduser()
+            if config.models_dir
+            else Path.home() / "Models" / "llamaUI"
+        )
+        dest_dir = base_dir / repo.repo_id.replace("/", "__")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build one request per individual file so the manager can run them
+        # in parallel while respecting its concurrency cap.
+        companion_paths = [
+            str(dest_dir / Path(repo.files[i].name).name) for i in indices
+        ]
+        cards_dir = str(default_paths().cards_dir)
+        token = self._token()
+
+        any_queued = False
+        for i in indices:
+            hf_file = repo.files[i]
+            label = f"{repo.repo_id}/{Path(hf_file.name).name}"
+            request = HfDownloadRequest(
+                repo_id=repo.repo_id,
+                filename=Path(hf_file.name).name,
+                url=hf_file.download_url or "",
+                dest_dir=str(dest_dir),
+                size_bytes=hf_file.size_bytes,
+                quant=hf_file.quantization,
+                architecture=repo.architecture,
+                license=repo.license,
+                base_model=repo.base_model,
+                tags=list(repo.tags),
+                gated=repo.gated,
+                private=repo.private,
+                card_text=self._card_text,
+                companion_paths=companion_paths,
+                cards_dir=cards_dir,
+                hf_token=token,
+            )
+            job_id = self._download_manager.enqueue(request)
+            any_queued = True
+            row = self._add_queue_row(job_id, label)
+            self._rows_by_id[job_id] = row
+
+        if any_queued:
+            self._pending_navigate = True
+
+    def _add_queue_row(self, job_id: str, label: str) -> DownloadRow:
         self.queue_empty.hide()
         row = DownloadRow(label)
         # Insert above the trailing stretch so the row sits at the top.
         self.queue_list_layout.insertWidget(self.queue_list_layout.count() - 1, row)
         self.queue_rows.append(row)
+        row.cancelled.connect(lambda _id=job_id: self._cancel_download_id(_id))
         return row
 
-    def _on_download_progress(self, filename: str, progress: DownloadProgress) -> None:
-        row = getattr(self, "_active_download_row", None)
+    def _cancel_download_id(self, job_id: str) -> None:
+        self._download_manager.cancel(job_id)
+        row = self._rows_by_id.get(job_id)
+        if row is not None:
+            row.set_status("cancelling…")
+            row.set_cancel_enabled(False)
+
+    def _on_manager_progress(self, job_id: str, progress: DownloadProgress) -> None:
+        row = self._rows_by_id.get(job_id)
         if row is None:
             return
         row.set_progress(progress.bytes_downloaded, progress.bytes_total)
-        if progress.status.value == "completed":
-            row.set_status("done")
-        elif progress.status.value == "cancelled":
+
+    def _on_manager_status(
+        self, job_id: str, status_name: str, error: object
+    ) -> None:
+        row = self._rows_by_id.get(job_id)
+        if row is None:
+            return
+        if status_name == DownloadStatus.CANCELLED.value:
             row.set_status("cancelled")
-        elif progress.status.value == "failed":
-            row.set_status(f"failed: {progress.error or 'unknown'}")
+            row.set_cancel_enabled(False)
+        elif status_name == DownloadStatus.FAILED.value:
+            row.set_status(f"failed: {error or 'unknown'}")
+            row.set_cancel_enabled(False)
+        elif status_name == DownloadStatus.COMPLETED.value:
+            row.set_status("done")
+            row.set_cancel_enabled(False)
 
-    def _cancel_download(self) -> None:
-        worker = getattr(self, "_active_download_worker", None)
-        if worker is not None:
-            worker.cancel()
-            row = getattr(self, "_active_download_row", None)
-            if row is not None:
-                row.set_status("cancelling…")
-
-    def _download_finished(self, result) -> None:
-        self.download_button.setEnabled(self.file_combo.currentIndex() >= 0)
-        self.cancel_button.setEnabled(False)
-        status, payload = result
-        row = getattr(self, "_active_download_row", None)
+    def _on_manager_finished(self, job_id: str, result: object) -> None:
+        row = self._rows_by_id.get(job_id)
         if row is not None:
-            if status == "ok":
-                row.set_status("done")
-            elif status == "cancelled":
-                row.set_status("cancelled")
+            if isinstance(result, DownloadError):
+                row.set_status(f"failed: {result}")
+                row.set_cancel_enabled(False)
             else:
-                row.set_status(f"failed: {payload}")
-        if status == "ok":
-            self.setProperty("pending_library_model_path", payload)
+                row.set_status("done")
+                row.set_cancel_enabled(False)
+
+        # When the queue empties with at least one successful download,
+        # navigate to the library page once so the user can see the new
+        # models. Use the last finished job's path; the Library page will
+        # select whatever is newest.
+        if (
+            self._pending_navigate
+            and self._download_manager.active_count() == 0
+            and isinstance(result, LocalModel)
+        ):
+            self._pending_navigate = False
+            self.setProperty("pending_library_model_path", result.path)
             self.navigate_requested.emit("library")
+
+    def _on_queue_changed(self, active: int, pending: int) -> None:
+        self.queue_status.setText(f"{active} active · {pending} pending")
+        if active == 0 and pending == 0:
+            self.queue_empty.show()
+        else:
+            self.queue_empty.hide()
 

@@ -10,7 +10,12 @@ This project started as a Tauri app, but WebKitGTK crashes on Wayland with NVIDI
 Scan a directory of GGUF files. The scanner distinguishes **primary runnable models** from **companion files** (mmproj, text-encoder, vision-encoder, embedding GGUFs) and links them together. Each model gets a card showing its quant, size, and hardware-fit estimate based on your detected RAM / VRAM.
 
 ### Discover
-Search HuggingFace for GGUF models. Results show quant variants, split-set detection (multi-part GGUFs), and a hardware-fit score. You can download directly — the downloader supports HTTP Range resume, so interrupted downloads pick up where they left off. Model cards are cached locally so you can read them offline later.
+Search HuggingFace for GGUF models. Results show quant variants, split-set
+detection (multi-part GGUFs), and a hardware-fit score. You can download
+directly — the download manager runs up to 3 files concurrently and each
+file gets its own progress row with a cancel button. Interrupted
+downloads pick up where they left off thanks to HTTP Range resume. Model
+cards are cached locally so you can read them offline later.
 
 ### Run
 This is the control center.
