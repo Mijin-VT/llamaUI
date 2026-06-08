@@ -13,6 +13,7 @@ import hashlib
 import logging
 import shutil
 import tempfile
+import time
 import urllib.error
 import re
 import urllib.request
@@ -357,11 +358,28 @@ class _DownloadJob(QObject):
         self._cancelled = True
 
     def run(self) -> None:
+        # Throttle progress signals so a fast download does not flood the
+        # main thread with tens of thousands of queued signal emissions.
+        # We emit immediately on non-DOWNLOADING statuses (completed,
+        # failed, cancelled) and at most every 100 ms while downloading.
+        _MIN_PROGRESS_INTERVAL = 0.1
+        last_emit = 0.0
+
+        def _throttled(prog: DownloadProgress) -> None:
+            nonlocal last_emit
+            now = time.monotonic()
+            if prog.status != DownloadStatus.DOWNLOADING:
+                last_emit = now
+                self.progress.emit(self.job_id, prog)
+            elif now - last_emit >= _MIN_PROGRESS_INTERVAL:
+                last_emit = now
+                self.progress.emit(self.job_id, prog)
+
         try:
             model = DownloadService().download(
                 self.request,
                 self.library,
-                on_progress=lambda prog: self.progress.emit(self.job_id, prog),
+                on_progress=_throttled,
                 cancel_check=lambda: self._cancelled,
             )
             self.finished.emit(self.job_id, model)
@@ -432,7 +450,10 @@ class DownloadManager(QObject):
         self._emit_queue()
 
     def _start(self, job_id: str, request: HfDownloadRequest) -> None:
-        job = _DownloadJob(job_id, request, self._library, parent=self)
+        # No parent on the job: Qt cannot move a QObject with a parent to
+        # another thread, which would cause the download to execute on the
+        # main thread and freeze the UI.
+        job = _DownloadJob(job_id, request, self._library)
         thread = QThread(self)
         job.moveToThread(thread)
 

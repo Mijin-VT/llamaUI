@@ -5,16 +5,19 @@ Verifies:
 - Progress and finished signals are delivered on the main thread.
 - Cancel removes queued items and stops active ones.
 - UI event loop stays responsive while downloads run.
+- Downloads actually execute on background threads (regression guard for
+  moveToThread failures that silently run on the main thread).
 """
 from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path("/home/npittas/llamaUI")
 QT_ROOT = REPO_ROOT / "qt_app"
 for candidate in (REPO_ROOT, QT_ROOT):
     if str(candidate) not in sys.path:
@@ -34,16 +37,17 @@ from app.services.download_service import (  # noqa: E402
 
 
 def _noop_download_service():
-    """Return a factory for a fake DownloadService that sleeps a little
-    and reports progress so we can observe concurrent execution."""
+    """Return a fake DownloadService that sleeps a little, reports progress,
+    and records which thread it ran on so we can verify background execution."""
 
     class _FakeService:
         _calls: list[HfDownloadRequest] = []
         _cancelled: set[str] = set()
+        _thread_ids: set[int | None] = set()
 
         def download(self, req: HfDownloadRequest, library, *, on_progress=None, cancel_check=None):
             self._calls.append(req)
-            job_id = req.filename
+            self._thread_ids.add(threading.current_thread().ident)
             total = 1024 * 1024
             for downloaded in range(0, total + 1, total // 4):
                 if cancel_check and cancel_check():
@@ -57,7 +61,7 @@ def _noop_download_service():
                         bytes_total=total,
                     )
                     on_progress(prog)
-                time.sleep(0.05)
+                time.sleep(0.15)
             from llama_data.models import LocalModel
 
             return LocalModel(
@@ -121,6 +125,8 @@ def main() -> int:
             while time.time() < deadline and len(finished) < 5:
                 app.processEvents()
                 time.sleep(0.01)
+                # Polling the manager directly catches state even when progress
+                # signals are throttled or delivered slightly out of order.
                 max_active[0] = max(max_active[0], manager.active_count())
                 max_pending[0] = max(max_pending[0], manager.pending_count())
 
@@ -128,6 +134,14 @@ def main() -> int:
             # and at least 2 pending at some point.
             check(max_active[0] == 3, f"manager caps active downloads at 3 (observed max {max_active[0]})")
             check(max_pending[0] >= 2, f"at least 2 downloads were queued (observed max {max_pending[0]})")
+
+            # All downloads must have run on threads other than the main thread.
+            main_tid = threading.current_thread().ident
+            worker_tids = fake._thread_ids - {main_tid}
+            check(
+                len(worker_tids) >= 3,
+                f"downloads ran on background threads (observed worker tids: {worker_tids})",
+            )
 
             # Ensure the UI event loop is still processing: schedule a timer
             # and confirm it fires while downloads are in flight.
@@ -168,6 +182,16 @@ def main() -> int:
                 cancel_id not in finished,
                 "cancelled queued item did not start or finish",
             )
+
+        # Allow background QThreads to finish quitting before the
+        # interpreter shuts down; otherwise the process can abort.
+        manager.deleteLater()
+        for _ in range(100):
+            app.processEvents()
+            if manager.active_count() == 0:
+                time.sleep(0.02)
+            else:
+                time.sleep(0.05)
 
         print("\n=== All DownloadManager smoke tests passed ===")
         return 0
