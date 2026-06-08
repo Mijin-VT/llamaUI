@@ -150,12 +150,12 @@ class MonoLog(QFrame):
 
 
 class DownloadRow(QFrame):
-    """One line in the download queue: filename + bytes + progress bar.
+    """One line in the download queue: filename + bytes + progress bar + cancel.
 
     The progress bar shows an indeterminate animation when the total size
     is unknown, and a determinate fill once the server reports
-    ``Content-Length``. Cancellation lives on the page (Cancel button next
-    to Download); this row is purely a status surface.
+    ``Content-Length``. Each row has its own cancel button; the page wires
+    the ``cancelled`` signal to the corresponding download id.
     """
 
     cancelled = Signal()
@@ -183,6 +183,16 @@ class DownloadRow(QFrame):
         self.bar.setValue(0)
         self.bar.setMinimumWidth(160)
         layout.addWidget(self.bar, 2)
+
+        self.cancel_btn = QPushButton("\u00d7", self)
+        self.cancel_btn.setToolTip("Cancel download")
+        self.cancel_btn.setProperty("variant", "danger")
+        self.cancel_btn.setFixedSize(24, 24)
+        self.cancel_btn.clicked.connect(self.cancelled)
+        layout.addWidget(self.cancel_btn)
+
+    def set_cancel_enabled(self, enabled: bool) -> None:
+        self.cancel_btn.setEnabled(enabled)
 
     def set_progress(self, downloaded: int, total: int | None) -> None:
         if total and total > 0:

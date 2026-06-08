@@ -75,6 +75,16 @@ class DownloadError(Exception):
     """Raised when a download fails for a known reason."""
 
 
+class DownloadCancelled(DownloadError):
+    """Raised when a download is cancelled by the user.
+
+    Subclass of :class:`DownloadError` so existing ``except DownloadError``
+    branches still catch it, but callers can detect user-initiated cancels
+    with ``isinstance(exc, DownloadCancelled)`` and show a distinct
+    status (e.g. "cancelled" instead of "failed").
+    """
+
+
 # ---------------------------------------------------------------------------
 # Core download function
 # ---------------------------------------------------------------------------
@@ -384,9 +394,17 @@ class _DownloadJob(QObject):
             )
             self.finished.emit(self.job_id, model)
         except DownloadError as exc:
-            self.finished.emit(self.job_id, exc)
+            # Distinguish user cancellation from real failures so the UI
+            # can show "cancelled" rather than "failed".
+            if self._cancelled:
+                self.finished.emit(self.job_id, DownloadCancelled(str(exc) or "cancelled"))
+            else:
+                self.finished.emit(self.job_id, exc)
         except Exception as exc:
-            self.finished.emit(self.job_id, DownloadError(str(exc)))
+            if self._cancelled:
+                self.finished.emit(self.job_id, DownloadCancelled("cancelled"))
+            else:
+                self.finished.emit(self.job_id, DownloadError(str(exc)))
 
 
 class DownloadManager(QObject):
@@ -479,7 +497,9 @@ class DownloadManager(QObject):
 
     def _on_finished(self, job_id: str, result: object) -> None:
         self._active.pop(job_id, None)
-        if isinstance(result, DownloadError):
+        if isinstance(result, DownloadCancelled):
+            self.status_changed.emit(job_id, DownloadStatus.CANCELLED.value, None)
+        elif isinstance(result, DownloadError):
             self.status_changed.emit(job_id, DownloadStatus.FAILED.value, str(result))
         else:
             self.status_changed.emit(job_id, DownloadStatus.COMPLETED.value, None)
@@ -488,6 +508,7 @@ class DownloadManager(QObject):
 
 
 __all__ = [
+    "DownloadCancelled",
     "DownloadError",
     "DownloadManager",
     "DownloadProgress",

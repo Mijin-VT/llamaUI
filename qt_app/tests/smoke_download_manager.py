@@ -183,6 +183,46 @@ def main() -> int:
                 "cancelled queued item did not start or finish",
             )
 
+            # Test cancel of an active item: enqueue, wait for it to start,
+            # then cancel. The worker should observe the flag and the manager
+            # should emit a DownloadCancelled result.
+            from app.services.download_service import DownloadCancelled
+
+            active_cancel_id = manager.enqueue(
+                HfDownloadRequest(
+                    repo_id="org/model",
+                    filename="active_cancel.gguf",
+                    url="http://example.com/active_cancel.gguf",
+                    dest_dir=td,
+                    size_bytes=1024 * 1024,
+                )
+            )
+            # Wait for the worker to actually start.
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                app.processEvents()
+                if active_cancel_id in manager._active:
+                    break
+                time.sleep(0.01)
+            check(
+                active_cancel_id in manager._active,
+                "active-cancel target reached the active set before cancel",
+            )
+            manager.cancel(active_cancel_id)
+            # Wait for the worker to surface the cancellation.
+            deadline = time.time() + 3.0
+            while time.time() < deadline and active_cancel_id not in finished:
+                app.processEvents()
+                time.sleep(0.01)
+            check(
+                active_cancel_id in finished,
+                "cancelled active item surfaced a result",
+            )
+            check(
+                isinstance(finished[active_cancel_id], DownloadCancelled),
+                f"cancelled active item produced DownloadCancelled, got {type(finished[active_cancel_id]).__name__}",
+            )
+
         # Allow background QThreads to finish quitting before the
         # interpreter shuts down; otherwise the process can abort.
         manager.deleteLater()

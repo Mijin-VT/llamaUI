@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QScroll
 
 from llama_data import ConfigStore, LibraryStore, LocalModel, default_paths
 from ..services.download_service import (
+    DownloadCancelled,
     DownloadError,
     DownloadManager,
     DownloadProgress,
@@ -519,13 +520,15 @@ class DiscoverPage(PageBase):
     def _on_manager_finished(self, job_id: str, result: object) -> None:
         row = self._rows_by_id.get(job_id)
         if row is not None:
-            if isinstance(result, DownloadError):
+            if isinstance(result, DownloadCancelled):
+                row.set_status("cancelled")
+                row.set_cancel_enabled(False)
+            elif isinstance(result, DownloadError):
                 row.set_status(f"failed: {result}")
                 row.set_cancel_enabled(False)
             else:
                 row.set_status("done")
                 row.set_cancel_enabled(False)
-
         # When the queue empties with at least one successful download,
         # navigate to the library page once so the user can see the new
         # models. Use the last finished job's path; the Library page will
