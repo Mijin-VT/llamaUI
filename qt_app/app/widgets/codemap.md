@@ -70,4 +70,4 @@ Reusable, theme-aware UI primitives and shell chrome for the LlamUI Qt applicati
 - `Inspector.toggled` can be connected to the main window to adjust the central widget width or save the panel state.
 
 **No upstream service dependencies.**
-- The widget layer is strictly presentational. It does not import `llama_data`, download managers, or the Tauri bridge. State (model names, download bytes, hardware profiles) is pushed in from pages via the public `set_*` / `update_*` APIs.
+- The widget layer is strictly presentational. It does not import `llama_data` or download managers. State (model names, download bytes, hardware profiles) is pushed in from pages via the public `set_*` / `update_*` APIs.

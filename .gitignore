@@ -21,17 +21,7 @@ dist/
 *.jsc
 .qmlls.ini
 
-# --- Tauri / Rust (legacy, left as reference) ---
-src-tauri/target/
-src-tauri/Cargo.lock
-src-tauri/gen/schemas/*
-
-# --- Node (legacy Tauri frontend) ---
-node_modules/
-dist/
-.vite/
-
-# --- App runtime data (created under user config dirs, not in repo) ---
+# --- App runtime data ---
 .llamaUI/
 *.log
 
@@ -40,3 +30,8 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# --- Misc ---
+plans/
+screenshots/
+splitter_sizes
