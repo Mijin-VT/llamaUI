@@ -53,6 +53,8 @@ class AppConfig:
             "hf_token_source": self.hf_token_source.to_json(),
             "router_mode": self.router_mode,
             "selected_model_id": self.selected_model_id,
+            "selected_profile_id": self.selected_profile_id,
+            "global_settings": self.global_settings.to_json(),
         }
 
     @classmethod

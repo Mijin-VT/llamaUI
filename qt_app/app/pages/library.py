@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from llama_data import ConfigStore, LibraryStore, LocalModel, ProfileStore
+
 from ..services.hugging_face import compute_hardware_fit
 from ..services.library_scan import infer_quant, open_hf, read_card_cache, reveal_file, scan_models_dir
 from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton

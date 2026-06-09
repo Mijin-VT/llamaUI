@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from llama_data.llama_options import LLAMA_OPTION_CATALOG
+from llama_data.llama_options import LLAMA_OPTION_CATALOG, SettingValueMap
 from llama_data.models import AppConfig, HfTokenSource
 from llama_data.stores import ConfigStore
 
@@ -172,14 +172,12 @@ class SettingsPage(PageBase):
         self._router_mode_check.toggled.connect(self._on_router_mode_toggled)
         layout.addWidget(self._router_mode_check)
 
-        # Models dir row
+        # Models dir row — reuse the shared _models_dir_input from the
+        # download directory card so both cards stay in sync.
         dir_row = QHBoxLayout()
         dir_label = QLabel("Models dir", card)
         dir_label.setObjectName("Muted")
         dir_row.addWidget(dir_label)
-        self._models_dir_input = QLineEdit(card)
-        self._models_dir_input.setText(self._config.models_dir or "")
-        self._models_dir_input.setPlaceholderText("e.g. /home/you/Downloads/models")
         dir_row.addWidget(self._models_dir_input, 1)
         layout.addLayout(dir_row)
 
