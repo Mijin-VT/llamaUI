@@ -4,92 +4,92 @@ A native desktop UI for [llama.cpp](https://github.com/ggerganov/llama.cpp)'s `l
 
 This project started as a Tauri app, but WebKitGTK crashes on Wayland with NVIDIA explicit-sync unless you apply workaround env vars. That was unacceptable for a daily-driver tool, so the whole thing was rewritten in PySide6. The old Tauri source is still in `src/` and `src-tauri/` for reference, but it is no longer maintained.
 
-## What it actually does
+## What it does
 
 ### Library
-Scan a directory of GGUF files. The scanner distinguishes **primary runnable models** from **companion files** (mmproj, text-encoder, vision-encoder, embedding GGUFs) and links them together. Each model gets a card showing its quant, size, and hardware-fit estimate based on your detected RAM / VRAM.
+Scan a directory of GGUF files. The scanner distinguishes **primary runnable models** from **companion files** (mmproj, text-encoder, vision-encoder, embedding GGUFs) and links them together. Each model gets a card showing its quant, size, and hardware-fit estimate based on your detected RAM / VRAM. Browse the model's HuggingFace page or reveal the file in your file manager.
 
 ### Discover
-Search HuggingFace for GGUF models. Results show quant variants, split-set
-detection (multi-part GGUFs), and a hardware-fit score. You can download
-directly — the download manager runs up to 3 files concurrently and each
-file gets its own progress row with a cancel button. Interrupted
-downloads pick up where they left off thanks to HTTP Range resume. Model
-cards are cached locally so you can read them offline later.
+Search HuggingFace for GGUF models. Results show quant variants, split-set detection (multi-part GGUFs), and a hardware-fit score. Download directly — the download manager runs up to 3 files concurrently, each with its own progress row and cancel button. Interrupted downloads resume via HTTP Range. Model cards are cached locally for offline reading.
 
 ### Run
-This is the control center.
+The control center. Two modes:
 
-- **Pick a model** from your library.
-- **Edit its launch arguments** through a form UI that mirrors `llama-server --help`. The app can either parse the actual `--help` output from your binary (so it stays current with whatever llama.cpp version you have) or fall back to a static catalog.
-- **Save profiles** per-model directly in the Run page. Each profile stores its own set of arguments. Create, duplicate, reset, or apply presets like "Conservative CPU", "Balanced GPU", or "Low Memory" with one click.
-- **Start / stop / restart** the server. The process is launched in its own POSIX session group (`start_new_session=True`) so when you hit Stop, `os.killpg` terminates the entire process tree — no orphaned worker threads left behind.
-- **Live logs** with auto-tail scrolling. Filter by stdout/stderr or search the buffer.
-- **Command preview** shows the exact argv that will be passed to llama-server before you start it.
-- **API health** polling. If the server is up, you can switch models via the `/model` endpoint without a full restart (falls back to restart if the endpoint is missing or the model is incompatible).
+**Single Model** — Pick a model, configure launch arguments through a form UI that mirrors `llama-server --help` (auto-parsed from your binary), save per-model profiles with presets like "Conservative CPU" or "Balanced GPU", start/stop/restart with live logs and command preview.
+
+**Router Mode** — Serve all models from your library via llama-server's native router. The app auto-generates a `--models-preset` INI from your saved profiles, so each model gets its own context size, GPU layers, mmproj, and other settings. Companion GGUFs are automatically excluded. A loaded models panel shows what's in VRAM with unload buttons. Set max loaded models to control VRAM usage with LRU eviction.
+
+Additional features:
+- **Server re-attach**: If llama-server is already running when you open the app, it attaches to the existing process for stop/restart control — no orphaned servers.
+- **API health polling**: Live status, token throughput, and model switching.
+- **Command preview**: See the exact argv before you start.
+- **Live logs**: Auto-tail scrolling with stdout/stderr filtering and search.
 
 ### Settings
 - Point to your `llama-server` binary.
 - Set the models download directory.
-- Configure your HuggingFace token (saved to config, or read from `HF_TOKEN` env var).
-- Global defaults for host, port, and context size.
+- Configure bind host and port (defaults to `0.0.0.0:8080` for LAN access).
+- Toggle router mode with models directory.
+- HuggingFace token (saved to config, or read from `HF_TOKEN` env var).
+- Global defaults for all llama-server options.
 
 ### Diagnostics
-A quick health check page. Probes:
-- Qt framework / platform plugin (confirms native Wayland if available)
-- llama-server binary presence and version
-- HuggingFace API reachability
-- GPU detection (NVIDIA via `nvidia-smi`)
+Quick health check: Qt platform plugin, llama-server binary presence/version, HuggingFace API reachability, GPU detection (NVIDIA via `nvidia-smi`).
 
-## How it works
+## Architecture
 
-### Architecture
-- **Frontend**: PySide6 Qt Widgets. No QML. The shell is a `QMainWindow` with a sidebar, a `QStackedWidget` for pages, and a collapsible inspector panel. Splitter sizes persist via `QSettings`.
+- **Frontend**: PySide6 Qt Widgets. No QML. Two-pane splitter layout: sidebar navigation + page stack. Runtime status lives in the sidebar.
 - **Data layer**: Plain Python dataclasses + JSON files. `ConfigStore`, `LibraryStore`, and `ProfileStore` each own a versioned JSON envelope with migration hooks. Stores live in `~/.local/share/llamaUI/`.
-- **Background tasks**: `QThread` workers for search, downloads, and log reading. They dispatch updates back to the UI via Qt signals.
-- **Option schema**: On first run (or when the binary changes), the app runs `llama-server --help`, parses the output with a regex-based parser, and caches the resulting schema to disk. This means the UI stays accurate even if you upgrade llama.cpp and new flags appear.
-- **Argument building**: `build_argv` assembles the final command line from (1) global settings, (2) profile settings, (3) raw extra args. It filters out natural defaults (`0`, `""`, `[]`) so the command line stays clean.
+- **Background tasks**: `QThread` subclasses for search, downloads, and server management. They dispatch updates back to the UI via Qt signals.
+- **Option schema**: On first run (or when the binary changes), the app runs `llama-server --help`, parses the output, and caches the schema. The UI stays accurate even if you upgrade llama.cpp and new flags appear.
+- **Router preset**: `generate_models_preset()` writes an INI file listing every runnable model with per-model settings from saved profiles. `mmproj` is auto-attached from the library scan. Companion files are excluded. No `--models-dir` needed — the preset alone defines the model catalogue.
 
 ### Key design decisions
-- **No mock data in production paths**. Empty states are honest — if you have no models, the Library page says so.
-- **Slider + spinbox pairs**: Every numeric control is a composite widget where the slider and the spinbox share the same value model. Dragging updates the number; typing updates the slider.
-- **Process group termination**: We start the server with `start_new_session=True` so `os.killpg(pgid, signal.SIGKILL)` reliably cleans up auxiliary workers.
-- **Companion file filtering**: The library scanner knows that `mmproj-*.gguf`, `*-encoder-*.gguf`, and `*-embedding-*.gguf` are not standalone models. It attaches them to the primary model in the same directory.
+- **No mock data in production paths**. Empty states are honest.
+- **QThread subclasses over moveToThread**: `moveToThread` + `QueuedConnection` with Python callables mis-dispatches to the main thread in PySide6, causing bus errors. QThread subclasses avoid this.
+- **Process group termination**: Server starts with `start_new_session=True` so `os.killpg` cleans up the entire process tree on Stop.
+- **Companion file filtering**: The scanner knows `mmproj-*.gguf`, `*-encoder-*.gguf`, and `*-embedding-*.gguf` are not standalone models. It attaches them to the primary model.
+- **Config host/port authoritative**: Profile host/port never overrides saved Settings values.
 
 ## Requirements
 
-- Python 3.11+
-- A working `llama-server` binary (build it from [llama.cpp](https://github.com/ggerganov/llama.cpp) or grab a release)
-- Linux with a display server (X11 or Wayland). Developed and tested on KDE Plasma Wayland + NVIDIA RTX 4090.
-- `nvidia-smi` in your path if you want GPU detection.
+- Python 3.10+
+- PySide6 >= 6.6
+- Pillow >= 10.0
+- A working `llama-server` binary ([build from llama.cpp](https://github.com/ggerganov/llama.cpp) or grab a release)
+- Linux with X11 or Wayland (developed on KDE Plasma Wayland + NVIDIA RTX 5090)
+- `nvidia-smi` in PATH for GPU detection
 
 ## Installation
 
-Clone the repo and install dependencies:
+### Quick start (any OS)
 
 ```bash
 git clone https://github.com/NickPittas/llamUI.git
 cd llamUI
 
-# Create a venv (recommended)
-python -m venv .venv
-source .venv/bin/activate
+# Option 1: pip install (creates 'llamaui' command)
+pip install -e .
+llamaui
 
-# Install dependencies
-pip install PySide6 httpx
-```
-
-That's it. No build step, no npm, no cargo.
-
-## Running
-
-```bash
-# Package mode
+# Option 2: run directly
 python -m qt_app
 
-# Or directly
-python qt_app/main.py
+# Option 3: use the launcher script
+./llamaui.sh          # Linux/macOS
+llamaui.bat           # Windows
 ```
+
+### System integration (Linux/macOS)
+
+```bash
+./install.sh
+```
+
+This installs:
+- The `llamaui` command via pip
+- XDG desktop entry + icons (Linux — shows in app launcher)
+- .app bundle stub (macOS — shows in ~/Applications)
 
 On first launch, go to **Settings**, point it at your `llama-server` binary and your models directory, then hit **Scan Library**.
 
@@ -97,33 +97,54 @@ On first launch, go to **Settings**, point it at your `llama-server` binary and 
 
 ```
 llamUI/
-├── qt_app/                 # The actual application
+├── qt_app/                 # The application
 │   ├── app/
 │   │   ├── pages/          # Library, Discover, Run, Settings, Diagnostics
 │   │   ├── services/       # HF search, download, runtime, scanner, parser
-│   │   ├── widgets/        # Cards, buttons, slider+spinbox, sidebar, inspector
-│   │   ├── main_window.py  # Shell layout
-│   │   ├── application.py  # QApplication bootstrap
+│   │   ├── widgets/        # Cards, buttons, slider+spinbox, sidebar
+│   │   ├── main_window.py  # Two-pane shell layout
+│   │   ├── application.py  # QApplication bootstrap + window icon
 │   │   └── theme.py        # Dark palette + QSS stylesheet
 │   ├── llama_data/         # Models, stores, option catalog, migrations
+│   ├── icons/              # App icon at 9 sizes (16px–512px)
 │   ├── tests/              # Smoke tests (no pytest needed)
-│   └── main.py             # Entry point
+│   └── main.py             # Entry point (handles all invocation styles)
 ├── plans/                  # Architecture decision records
+├── pyproject.toml          # pip-installable package definition
+├── install.sh              # Cross-platform installer (Linux/macOS)
+├── install.bat             # Windows installer
+├── llamaui.sh              # Unix launcher
+├── llamaui.bat             # Windows launcher
 ├── src/                    # Old Tauri frontend (archived)
 └── src-tauri/              # Old Tauri backend (archived)
 ```
 
 ## Smoke tests
 
-There is no heavy test framework. Just run the smoke files directly:
+No heavy test framework — just run the smoke files directly:
 
 ```bash
-python qt_app/tests/smoke_services.py      # Data stores, scanner, parser
-python qt_app/tests/smoke_runtime_api.py   # Server API client
-python qt_app/tests/smoke_section15.py     # UI layout sanity (no horizontal overflow)
+python -m qt_app.tests.smoke_section0         # Shell layout sanity
+python -m qt_app.tests.smoke_services         # Data stores, scanner, parser
+python -m qt_app.tests.smoke_runtime          # build_argv, preset generation
+python -m qt_app.tests.smoke_runtime_api      # Server API client
+python -m qt_app.tests.smoke_download_manager # Download concurrency
 ```
 
-These exercises real code paths against temporary directories. They do not mock anything.
+These exercise real code paths against temporary directories. No mocks.
+
+## Router mode
+
+llamUI's router mode uses llama-server's native `--models-preset` feature to serve multiple models simultaneously:
+
+1. **Auto-generates a preset INI** from your library and saved profiles
+2. **Each model gets its own settings** — context size, GPU layers, batch size, temperature, mmproj
+3. **Companion files filtered** — only actual chat models appear to clients
+4. **mmproj auto-attached** — multimodal models work without manual configuration
+5. **Max loaded models** — control VRAM usage with LRU eviction
+6. **Loaded models panel** — see what's in VRAM, unload on demand
+
+Connect from any OpenAI-compatible client (Odysseus, Open WebUI, etc.) to `http://<host>:<port>`.
 
 ## Why not Tauri?
 
@@ -131,9 +152,9 @@ See `plans/framework-decision.md`. In short: WebKitGTK on Wayland + NVIDIA crash
 
 ## Known limitations
 
-- The download manager is single-file-at-a-time per queue entry. Parallel downloads would need a second queue layer.
-- Model switching via API only works if your `llama-server` build supports the `/model` endpoint (relatively recent llama.cpp).
-- No Windows or macOS testing has been done. The paths and process logic assume POSIX.
+- Router mode is built on llama-server's experimental router feature. Check your llama.cpp version supports `--models-preset`.
+- The download manager is single-file-at-a-time per queue entry.
+- Windows and macOS are supported via the launcher scripts but have not been extensively tested.
 
 ## License
 
