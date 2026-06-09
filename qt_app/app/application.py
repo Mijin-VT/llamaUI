@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Optional
+
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -38,13 +40,20 @@ def create_app(argv: Optional[list[str]] = None) -> QApplication:
 
     app = QApplication.instance() or QApplication(argv)
 
-    # Identity — visible to users in `qApp.applicationName()` and on Wayland
-    # as the app_id used for surfaces and taskbar grouping.
     app.setApplicationName("llamaUI")
     app.setApplicationDisplayName("llamaUI")
     app.setOrganizationName("llamaUI")
     app.setOrganizationDomain("llamaUI.local")
-    app.setDesktopFileName("llamaUI")
+    app.setDesktopFileName("llamaui")
+
+    # Application icon — use the bundled PNG at the largest available size.
+    _icons_dir = Path(__file__).resolve().parent.parent / "icons"
+    if _icons_dir.is_dir():
+        from PySide6.QtGui import QIcon
+        icon = QIcon()
+        for p in sorted(_icons_dir.glob("llamaui-*.png")):
+            icon.addFile(str(p))
+        app.setWindowIcon(icon)
 
     # KDE Wayland + NVIDIA hint: keep the EGL/GBM path the platform picks.
     # The PySide6 6.11 default Wayland plugin renders QWidget windows

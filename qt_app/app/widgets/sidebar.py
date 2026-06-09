@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -73,6 +74,28 @@ class Sidebar(QFrame):
 
         layout.addStretch(1)
 
+        self._status = QFrame(self)
+        self._status.setObjectName("SidebarStatus")
+        status_layout = QVBoxLayout(self._status)
+        status_layout.setContentsMargins(14, 10, 14, 12)
+        status_layout.setSpacing(4)
+        self._status_title = QLabel("Run", self._status)
+        self._status_title.setObjectName("SidebarStatusTitle")
+        self._status_title.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        status_layout.addWidget(self._status_title)
+        self._status_chip = QLabel("stopped", self._status)
+        self._status_chip.setObjectName("SidebarStatusChip")
+        status_layout.addWidget(self._status_chip)
+        self._status_line1 = QLabel("No model selected", self._status)
+        self._status_line1.setObjectName("Muted")
+        self._status_line1.setWordWrap(True)
+        status_layout.addWidget(self._status_line1)
+        self._status_line2 = QLabel("endpoint=http://127.0.0.1:8080", self._status)
+        self._status_line2.setObjectName("Muted")
+        self._status_line2.setWordWrap(True)
+        status_layout.addWidget(self._status_line2)
+        layout.addWidget(self._status)
+
         for item_id, btn in self._buttons.items():
             btn.clicked.connect(lambda _checked=False, i=item_id: self._on_clicked(i))
 
@@ -83,5 +106,14 @@ class Sidebar(QFrame):
         """Mark ``item_id`` as the currently selected page."""
         btn = self._buttons[item_id]
         btn.setChecked(True)
+
+    def update_details(self, title: str, chip_text: str, chip_style: str, line1: str, line2: str, command_lines: list[str] | None = None) -> None:
+        self._status_title.setText(title or "Run")
+        self._status_chip.setText(chip_text or "—")
+        self._status_chip.setProperty("chipStyle", chip_style or "muted")
+        self._status_chip.style().unpolish(self._status_chip)
+        self._status_chip.style().polish(self._status_chip)
+        self._status_line1.setText(line1 or "")
+        self._status_line2.setText(line2 or "")
 
 

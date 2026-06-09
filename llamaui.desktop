@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=llamaUI
+GenericName=Local LLM Manager
+Comment=Run and manage llama-server models locally
+Icon=llamaui
+Exec=/usr/bin/python3 -m qt_app
+Path=/home/npittas/llamUI
+Terminal=false
+Categories=Development;IDE;Network;
+Keywords=llm;llama;gguf;ai;models;
+StartupNotify=true
+StartupWMClass=llamaUI

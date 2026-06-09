@@ -18,13 +18,36 @@ from PySide6.QtWidgets import (
 ChipStyle = Literal["success", "warning", "accent", "muted"]
 
 
+class ElidedLabel(QLabel):
+    """Single-line label that elides instead of forcing parent layouts wider."""
+
+    def __init__(self, text: str = "", parent=None, *, mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle):
+        super().__init__("", parent)
+        self._full_text = ""
+        self._mode = mode
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API
+        self._full_text = text or ""
+        self.setToolTip(self._full_text)
+        self._apply_elide()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self._apply_elide()
+        super().resizeEvent(event)
+    def _apply_elide(self) -> None:
+        metrics = self.fontMetrics()
+        QLabel.setText(self, metrics.elidedText(self._full_text, self._mode, max(0, self.width())))
+
+
 class Card(QFrame):
     """A bordered, rounded panel — the base building block for content."""
     def __init__(self, parent: Optional[QFrame] = None, *, alt: bool = False):
         super().__init__(parent)
         self.setObjectName("CardAlt" if alt else "Card")
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-
 
 class CardTitle(QLabel):
     def __init__(self, text: str, parent=None):
@@ -36,8 +59,8 @@ class OptionCard(QFrame):
     def __init__(self, label: str, flag: str, *, importance: int = 0, parent=None):
         super().__init__(parent)
         self.setObjectName("OptionCard")
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(380)
+        self.setMinimumWidth(220)
+        self.setMaximumWidth(360)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 12, 10)
         outer.setSpacing(6)
@@ -96,6 +119,7 @@ class FieldTile(QFrame):
 
         self._value = QLabel(value, self)
         self._value.setObjectName("FieldValue")
+        self._value.setWordWrap(True)
         layout.addWidget(self._value)
 
     def set_value(self, value: str) -> None:
@@ -143,6 +167,8 @@ class MonoLog(QFrame):
 
     def append_line(self, text: str) -> None:
         line = QLabel(text, self)
+        line.setWordWrap(True)
+        line.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         line.setObjectName("Mono")
         line.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._layout.addWidget(line)
@@ -167,22 +193,21 @@ class DownloadRow(QFrame):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(10)
 
-        self.name = QLabel(label, self)
+        self.name = ElidedLabel(label, self)
         self.name.setObjectName("DownloadRowName")
-        self.name.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.name, 1)
 
         self.bytes_label = QLabel("—", self)
         self.bytes_label.setObjectName("Muted")
-        self.bytes_label.setMinimumWidth(140)
+        self.bytes_label.setFixedWidth(88)
         self.bytes_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.bytes_label)
 
         self.bar = QProgressBar(self)
         self.bar.setRange(0, 0)  # indeterminate until we know the total
         self.bar.setValue(0)
-        self.bar.setMinimumWidth(160)
-        layout.addWidget(self.bar, 2)
+        self.bar.setFixedWidth(120)
+        layout.addWidget(self.bar)
 
         self.cancel_btn = QPushButton("\u00d7", self)
         self.cancel_btn.setToolTip("Cancel download")

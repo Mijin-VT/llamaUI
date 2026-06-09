@@ -1,10 +1,14 @@
 """Application entry point.
 
-Supports both invocation styles:
+Supports all invocation styles:
 
-- ``python qt_app/main.py`` — script mode (the package parent is added
-  to ``sys.path`` automatically, so absolute ``qt_app.app`` imports work).
-- ``python -m qt_app`` — package mode (uses relative imports).
+- ``python qt_app/main.py`` — script mode
+- ``python -m qt_app`` — package mode
+- ``llamaui`` — pip-installed entry point
+
+All three require the project root (containing both ``qt_app/`` and
+``llama_data/``) on ``sys.path``.  This module ensures that *before*
+any qt_app sub-module is imported.
 """
 from __future__ import annotations
 
@@ -12,23 +16,17 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+# --- Ensure llama_data is importable --------------------------------------
+# llama_data lives inside qt_app/llama_data/ but is imported as a top-level
+# package (``from llama_data import …``) throughout the codebase.
+# ``python -m qt_app`` puts qt_app/ on sys.path → llama_data resolves.
+# The pip entry point does NOT, so we add it unconditionally here.
+_QT_APP_DIR = str(Path(__file__).resolve().parent)
+if _QT_APP_DIR not in sys.path:
+    sys.path.insert(0, _QT_APP_DIR)
 
-def _ensure_package_importable() -> None:
-    """Make ``import qt_app`` work when run as a bare script.
-
-    When Python runs ``qt_app/main.py`` directly, only ``qt_app/`` ends up
-    on ``sys.path``. Adding the parent directory lets absolute imports
-    resolve the ``qt_app`` package regardless of how the script is launched.
-    """
-    pkg_parent = Path(__file__).resolve().parent.parent
-    pkg_parent_str = str(pkg_parent)
-    if pkg_parent_str not in sys.path:
-        sys.path.insert(0, pkg_parent_str)
-
-
-_ensure_package_importable()
-
-from qt_app.app import MainWindow, create_app  # noqa: E402  (after sys.path fix)
+# --- Now safe to import from qt_app and llama_data -------------------------
+from qt_app.app import MainWindow, create_app  # noqa: E402
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -38,7 +36,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     window = MainWindow()
     window.show()
 
-    # exec() returns the exit code set by the last window to close.
     return app.exec()
 
 

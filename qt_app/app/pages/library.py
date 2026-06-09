@@ -19,14 +19,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSizePolicy,
+    QWidget,
     QTextBrowser,
+    QTextEdit,
     QVBoxLayout,
 )
 
 from ..services.hugging_face import compute_hardware_fit
 from ..services.library_scan import infer_quant, open_hf, read_card_cache, reveal_file, scan_models_dir
 from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton
-from ..widgets.cards import Card, CardTitle, FieldTile
+from ..widgets.cards import Card, CardTitle, ElidedLabel, FieldTile
 from .base import PageBase
 
 
@@ -169,6 +171,7 @@ class LibraryPage(PageBase):
 
         self._detail_title = QLabel("Select a model to view metadata and model card.", card)
         self._detail_title.setObjectName("Muted")
+        self._detail_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._detail_title.setWordWrap(True)
         layout.addWidget(self._detail_title)
 
@@ -176,12 +179,15 @@ class LibraryPage(PageBase):
         self._detail_meta.setObjectName("Muted")
         self._detail_meta.setWordWrap(True)
         self._detail_meta.setTextFormat(Qt.TextFormat.RichText)
+        self._detail_meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self._detail_meta)
 
-        self._tags_row = QHBoxLayout()
+        self._tags_container = QWidget(card)
+        self._tags_row = QHBoxLayout(self._tags_container)
+        self._tags_row.setContentsMargins(0, 0, 0, 0)
         self._tags_row.setSpacing(6)
         self._tags_row.addStretch(1)
-        layout.addLayout(self._tags_row)
+        layout.addWidget(self._tags_container)
 
         # Action buttons
         actions = QHBoxLayout()
@@ -226,7 +232,8 @@ class LibraryPage(PageBase):
         self._card_text = QTextBrowser(card)
         self._card_text.setOpenExternalLinks(True)
         self._card_text.setReadOnly(True)
-        self._card_text.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._card_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._card_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._card_text)
         self._detail_card = card
         self._layout.addWidget(card)
@@ -239,9 +246,13 @@ class LibraryPage(PageBase):
 
         self.model_picker = QComboBox(card)
         self.model_picker.setObjectName("ModelPicker")
+        self.model_picker.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_picker.setMinimumContentsLength(24)
+        self.model_picker.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.model_picker.currentIndexChanged.connect(self._on_picker_changed)
         layout.addWidget(self.model_picker)
 
+        self.model_picker.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._layout.addWidget(card)
 
     # -- detail panel ----------------------------------------------------
@@ -284,8 +295,9 @@ class LibraryPage(PageBase):
         self._clear_tags()
         if model.tags:
             for tag in model.tags:
-                chip = QLabel(tag, self._detail_card)
+                chip = ElidedLabel(tag, self._tags_container)
                 chip.setObjectName("Chip")
+                chip.setMaximumWidth(180)
                 self._tags_row.addWidget(chip)
         self.inspector_changed.emit({
             "title": "Library",
@@ -354,22 +366,22 @@ class LibraryPage(PageBase):
             self.navigate_requested.emit("run")
 
     def _on_edit_profiles(self) -> None:
-        """Persist selected model and navigate to Profiles page."""
+        """Persist selected model and navigate to Run page (where profiles are edited)."""
         m = self._selected_model
         if m:
             self._persist_model_selection(m.id)
             name = m.path.rsplit("/", 1)[-1] or m.id
-            self._detail_title.setText(f"{name}  (switching to Profiles)")
-            self.navigate_requested.emit("profiles")
+            self._detail_title.setText(f"{name}  (switching to Run)")
+            self.navigate_requested.emit("run")
 
     def _on_create_profile(self) -> None:
-        """Persist selected model and navigate to Profiles page for creation."""
+        """Persist selected model and navigate to Run page for profile creation."""
         m = self._selected_model
         if m:
             self._persist_model_selection(m.id)
             name = m.path.rsplit("/", 1)[-1] or m.id
-            self._detail_title.setText(f"{name}  (switching to Profiles)")
-            self.navigate_requested.emit("profiles")
+            self._detail_title.setText(f"{name}  (switching to Run)")
+            self.navigate_requested.emit("run")
 
     def select_model_by_path(self, path: str) -> None:
         for i in range(self.model_picker.count()):
@@ -387,6 +399,11 @@ class LibraryPage(PageBase):
         except Exception as exc:  # surface, don't crash the shell
             self._render_error(f"Library store failed to load: {exc}")
             return
+
+        # Filter out companion GGUFs (mmproj, text-encoder, etc.) that may
+        # have been saved to the store before the scan filter was added.
+        from ..services.library_scan import is_companion_gguf
+        models = [m for m in models if not is_companion_gguf(Path(m.path))]
 
         profile_counts = self._profile_counts_for([m.id for m in models])
 

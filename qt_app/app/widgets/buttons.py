@@ -6,7 +6,7 @@ Centralizing the variant property keeps individual call sites readable:
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 
 class _VariantButton(QPushButton):
@@ -14,9 +14,10 @@ class _VariantButton(QPushButton):
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setMaximumWidth(220)
         if self._VARIANT:
             self.setProperty("variant", self._VARIANT)
-
 
 class SecondaryButton(_VariantButton):
     _VARIANT = "secondary"

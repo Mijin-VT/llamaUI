@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 
 from llama_data.models import LocalModel, utc_now
 from llama_data.stores import LibraryStore
@@ -340,15 +340,11 @@ def _build_local_model(req: HfDownloadRequest, dest_path: Path) -> LocalModel:
 _MAX_CONCURRENT_DOWNLOADS = 3
 
 
-class _DownloadJob(QObject):
-    """One file download running on a background thread.
-
-    Do not instantiate directly; use :class:`DownloadManager`.
-    """
+class _DownloadThread(QThread):
+    """One file download running in its own QThread."""
 
     progress = Signal(str, object)  # (id, DownloadProgress)
-    finished = Signal(str, object)  # (id, LocalModel | DownloadError)
-    _cancelled = False
+    completed = Signal(str, object)  # (id, LocalModel | DownloadError)
 
     def __init__(
         self,
@@ -361,6 +357,7 @@ class _DownloadJob(QObject):
         self.job_id = job_id
         self.request = request
         self.library = library
+        self._cancelled = False
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -368,8 +365,6 @@ class _DownloadJob(QObject):
     def run(self) -> None:
         # Throttle progress signals so a fast download does not flood the
         # main thread with tens of thousands of queued signal emissions.
-        # We emit immediately on non-DOWNLOADING statuses (completed,
-        # failed, cancelled) and at most every 100 ms while downloading.
         _MIN_PROGRESS_INTERVAL = 0.1
         last_emit = 0.0
 
@@ -390,19 +385,17 @@ class _DownloadJob(QObject):
                 on_progress=_throttled,
                 cancel_check=lambda: self._cancelled,
             )
-            self.finished.emit(self.job_id, model)
+            self.completed.emit(self.job_id, model)
         except DownloadError as exc:
-            # Distinguish user cancellation from real failures so the UI
-            # can show "cancelled" rather than "failed".
             if self._cancelled:
-                self.finished.emit(self.job_id, DownloadCancelled(str(exc) or "cancelled"))
+                self.completed.emit(self.job_id, DownloadCancelled(str(exc) or "cancelled"))
             else:
-                self.finished.emit(self.job_id, exc)
+                self.completed.emit(self.job_id, exc)
         except Exception as exc:
             if self._cancelled:
-                self.finished.emit(self.job_id, DownloadCancelled("cancelled"))
+                self.completed.emit(self.job_id, DownloadCancelled("cancelled"))
             else:
-                self.finished.emit(self.job_id, DownloadError(str(exc)))
+                self.completed.emit(self.job_id, DownloadError(str(exc)))
 
 
 class DownloadManager(QObject):
@@ -422,7 +415,7 @@ class DownloadManager(QObject):
         super().__init__(parent)
         self._library = library
         self._pending: deque[tuple[str, HfDownloadRequest]] = deque()
-        self._active: dict[str, tuple[_DownloadJob, QThread]] = {}
+        self._active: dict[str, _DownloadThread] = {}
         self._counter = 0
 
     def _next_id(self) -> str:
@@ -447,8 +440,7 @@ class DownloadManager(QObject):
                 return
         active = self._active.get(job_id)
         if active is not None:
-            job, _thread = active
-            job.cancel()
+            active.cancel()
 
     def active_count(self) -> int:
         return len(self._active)
@@ -466,35 +458,24 @@ class DownloadManager(QObject):
         self._emit_queue()
 
     def _start(self, job_id: str, request: HfDownloadRequest) -> None:
-        # No parent on the job: Qt cannot move a QObject with a parent to
-        # another thread, which would cause the download to execute on the
-        # main thread and freeze the UI.
-        job = _DownloadJob(job_id, request, self._library)
-        thread = QThread(self)
-        job.moveToThread(thread)
-
-        # Worker signals → manager signals (cross-thread safe).
-        job.progress.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
-        job.finished.connect(self._on_finished, Qt.ConnectionType.QueuedConnection)
-
-        # Clean up thread when worker finishes.
-        job.finished.connect(thread.quit, Qt.ConnectionType.QueuedConnection)
-        job.finished.connect(job.deleteLater, Qt.ConnectionType.QueuedConnection)
+        thread = _DownloadThread(job_id, request, self._library, self)
+        thread.progress.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
+        thread.completed.connect(self._on_finished, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(thread.deleteLater, Qt.ConnectionType.QueuedConnection)
-
-        # Start the worker once the thread event loop is running.
-        thread.started.connect(job.run, Qt.ConnectionType.QueuedConnection)
+        self._active[job_id] = thread
         thread.start()
-
-        self._active[job_id] = (job, thread)
         self.status_changed.emit(job_id, DownloadStatus.DOWNLOADING.value, None)
         self._emit_queue()
 
+    @Slot(str, object)
     def _on_progress(self, job_id: str, progress: DownloadProgress) -> None:
         self.progress.emit(job_id, progress)
 
+    @Slot(str, object)
     def _on_finished(self, job_id: str, result: object) -> None:
-        self._active.pop(job_id, None)
+        thread = self._active.pop(job_id, None)
+        if thread is not None:
+            thread.wait(5000)
         if isinstance(result, DownloadCancelled):
             self.status_changed.emit(job_id, DownloadStatus.CANCELLED.value, None)
         elif isinstance(result, DownloadError):

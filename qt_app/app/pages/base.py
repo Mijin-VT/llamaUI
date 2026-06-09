@@ -37,7 +37,7 @@ class PageBase(QScrollArea):
         # stays transparent so the shell background shows through gaps.
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self._body = QWidget(self)

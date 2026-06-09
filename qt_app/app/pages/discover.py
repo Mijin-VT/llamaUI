@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget
 
 from llama_data import ConfigStore, LibraryStore, LocalModel, default_paths
 from ..services.download_service import (
@@ -130,16 +130,27 @@ def _build_selectable(repo: HfRepoSummary) -> list[_Selectable]:
 # ---------------------------------------------------------------------------
 
 
-class _SearchWorker(QObject):
+class _SearchThread(QThread):
     finished = Signal(object)
-    def __init__(self, query: str, filters: list[HfFilter], token: str | None): super().__init__(); self.query = query; self.filters = filters; self.token = token
+
+    def __init__(self, query: str, filters: list[HfFilter], token: str | None, parent=None):
+        super().__init__(parent)
+        self.query = query
+        self.filters = filters
+        self.token = token
+
     def run(self) -> None:
         self.finished.emit(HuggingFaceSearchService(token=self.token).search(self.query, self.filters))
 
 
-class _CardWorker(QObject):
+class _CardThread(QThread):
     finished = Signal(str)
-    def __init__(self, repo_id: str, token: str | None): super().__init__(); self.repo_id = repo_id; self.token = token
+
+    def __init__(self, repo_id: str, token: str | None, parent=None):
+        super().__init__(parent)
+        self.repo_id = repo_id
+        self.token = token
+
     def run(self) -> None:
         text = HuggingFaceSearchService(token=self.token).fetch_card_text(self.repo_id) or ""
         self.finished.emit(text)
@@ -201,7 +212,12 @@ class DiscoverPage(PageBase):
 
         self.results = QTableWidget(0, 7, search_card)
         self.results.setHorizontalHeaderLabels(["Repo", "Author", "Downloads", "Likes", "Best fit", "Files", "Smallest"])
-        self.results.horizontalHeader().setStretchLastSection(True)
+        header = self.results.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 7):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.results.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.results.itemSelectionChanged.connect(self._select_repo)
         layout.addWidget(self.results)
         self._layout.addWidget(search_card)
@@ -219,6 +235,9 @@ class DiscoverPage(PageBase):
 
         file_row = QHBoxLayout()
         self.file_combo = QComboBox(detail)
+        self.file_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.file_combo.setMinimumContentsLength(18)
+        self.file_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.file_combo.currentIndexChanged.connect(self._on_file_changed)
         file_row.addWidget(self.file_combo, 1)
         self.download_button = SuccessButton("Download selected file", detail)
@@ -236,6 +255,8 @@ class DiscoverPage(PageBase):
         self.card_view.setOpenExternalLinks(True)
         self.card_view.setPlainText("No model card loaded.")
         self.card_view.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.card_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.card_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         d.addWidget(self.card_view)
         self._layout.addWidget(detail)
 
@@ -294,27 +315,16 @@ class DiscoverPage(PageBase):
             return
         self.search_button.setEnabled(False)
         self.status.setText(f"Searching HuggingFace for '{query}'...")
-        thread = QThread(self)
-        worker = _SearchWorker(query, self._active_filters(), self._token())
-        worker.moveToThread(thread)
-        thread.started.connect(lambda: worker.run(), Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(self._show_results, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(thread.quit, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(worker.deleteLater, Qt.ConnectionType.QueuedConnection)
+        thread = _SearchThread(query, self._active_filters(), self._token(), self)
+        thread.finished.connect(self._show_results, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(thread.deleteLater)
-        # Use explicit QueuedConnection + a lambda wrapper for the worker's
-        # run slot. PySide6's `thread.started.connect(worker.run, …)` form
-        # can mis-dispatch `run` onto the GUI thread when the QThread is
-        # parented to a widget, which would freeze the UI on long network
-        # calls. The lambda gives Qt an unambiguous, no-method-bridge target
-        # that is queued onto the worker thread.
         thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
         self._threads.append(thread)
         thread.start()
 
+    @Slot(object)
     def _show_results(self, outcome) -> None:
         self.search_button.setEnabled(True)
-        self.results.setRowCount(0)
         self._repos = []
         self._selected_repo = None
         self._selectable = []
@@ -401,18 +411,14 @@ class DiscoverPage(PageBase):
 
     def _load_card(self, repo_id: str) -> None:
         self.card_view.setPlainText("Loading model card...")
-        thread = QThread(self)
-        worker = _CardWorker(repo_id, self._token())
-        worker.moveToThread(thread)
-        thread.started.connect(lambda: worker.run(), Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(self._show_card, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(thread.quit, Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(worker.deleteLater, Qt.ConnectionType.QueuedConnection)
+        thread = _CardThread(repo_id, self._token(), self)
+        thread.finished.connect(self._show_card, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
         self._threads.append(thread)
         thread.start()
 
+    @Slot(str)
     def _show_card(self, text: str) -> None:
         self._card_text = text or ""
         if text:
@@ -495,12 +501,14 @@ class DiscoverPage(PageBase):
             row.set_status("cancelling…")
             row.set_cancel_enabled(False)
 
+    @Slot(str, object)
     def _on_manager_progress(self, job_id: str, progress: DownloadProgress) -> None:
         row = self._rows_by_id.get(job_id)
         if row is None:
             return
         row.set_progress(progress.bytes_downloaded, progress.bytes_total)
 
+    @Slot(str, str, object)
     def _on_manager_status(
         self, job_id: str, status_name: str, error: object
     ) -> None:
@@ -517,6 +525,7 @@ class DiscoverPage(PageBase):
             row.set_status("done")
             row.set_cancel_enabled(False)
 
+    @Slot(str, object)
     def _on_manager_finished(self, job_id: str, result: object) -> None:
         row = self._rows_by_id.get(job_id)
         if row is not None:
@@ -542,6 +551,7 @@ class DiscoverPage(PageBase):
             self.setProperty("pending_library_model_path", result.path)
             self.navigate_requested.emit("library")
 
+    @Slot(int, int)
     def _on_queue_changed(self, active: int, pending: int) -> None:
         self.queue_status.setText(f"{active} active · {pending} pending")
         if active == 0 and pending == 0:

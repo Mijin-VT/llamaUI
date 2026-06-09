@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import uuid
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+
 from llama_data import ConfigStore, LibraryStore, ModelProfile, PROFILE_PRESETS, ProfileStore
 from llama_data.llama_options import (
     LLAMA_OPTION_CATALOG,
@@ -38,10 +39,10 @@ from ..services.option_schema import (
     SchemaCache,
     build_runtime_schema,
 )
-from ..services.runtime import LlamaServerController, ServerState, build_argv
+from ..services.runtime import LlamaServerController, ServerState, build_argv, generate_models_preset
 from ..services.runtime_api import LlamaServerApiClient
 from ..widgets.buttons import DangerButton, FilterPill, SecondaryButton, SuccessButton
-from ..widgets.cards import Card, CardTitle, FieldTile, OptionCard
+from ..widgets.cards import Card, CardTitle, ElidedLabel, FieldTile, OptionCard
 from ..widgets.flow import FlowLayout
 from ..widgets.slider_spin import SliderDoubleSpinBox, SliderSpinBox
 from .base import PageBase
@@ -122,6 +123,21 @@ def _model_combo_label(model) -> str:
     return f"{name} · {quant} · {size} · {provider}"
 
 
+class _StopThread(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, controller: LlamaServerController, parent=None):
+        super().__init__(parent)
+        self._controller = controller
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self._controller.stop())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class RunPage(PageBase):
     inspector_changed = Signal(dict)
     def __init__(
@@ -153,6 +169,9 @@ class RunPage(PageBase):
         )
         self._load_schema()
         self._build_runtime_header()
+        config = self.config_store.load()
+        self._mode_combo.setCurrentIndex(1 if config.router_mode else 0)
+        self._apply_mode_visibility()
         self._build_main_settings()
         self._build_advanced_groups()
         self._build_logs()
@@ -161,6 +180,10 @@ class RunPage(PageBase):
         self._timer.setInterval(2000)
         self._timer.timeout.connect(self._poll_status)
         self._timer.start()
+
+        # If llama-server is already running on the configured host:port,
+        # attach to it instead of showing STOPPED.
+        self._try_attach_existing()
 
     # ------------------------------------------------------------------
     # Schema
@@ -197,47 +220,72 @@ class RunPage(PageBase):
 
     def _build_runtime_header(self) -> None:
         hero = Card(self._body)
+        self._header_card = hero
         layout = QVBoxLayout(hero)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
         layout.addWidget(CardTitle("Run local llama-server", hero))
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:", hero))
+        self._mode_combo = QComboBox(hero)
+        self._mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._mode_combo.setMinimumContentsLength(12)
+        self._mode_combo.addItems(["Single Model", "Router (All Models)"])
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self._mode_combo)
+        mode_row.addStretch(1)
+        layout.addLayout(mode_row)
 
         row = QHBoxLayout()
         self.model_combo = QComboBox(hero)
         self.model_combo.setObjectName("ModelPicker")
+        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo.setMinimumContentsLength(22)
+        self.model_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.profile_combo = QComboBox(hero)
+        self.profile_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.profile_combo.setMinimumContentsLength(14)
+        self.profile_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
-        row.addWidget(QLabel("Model", hero))
+        self._model_label = QLabel("Model", hero)
+        row.addWidget(self._model_label)
         row.addWidget(self.model_combo, 2)
-        row.addWidget(QLabel("Profile", hero))
+        self._profile_label = QLabel("Profile", hero)
+        row.addWidget(self._profile_label)
         row.addWidget(self.profile_combo, 1)
         layout.addLayout(row)
         save = SuccessButton("Save Profile", hero); save.clicked.connect(self._save_profile)
         save_as = SecondaryButton("Save As", hero); save_as.clicked.connect(self._save_profile_as)
         duplicate = SecondaryButton("Duplicate", hero); duplicate.clicked.connect(self._duplicate_profile)
         reset = DangerButton("Reset", hero); reset.clicked.connect(self._reset_form_to_profile)
-        self.preset_combo = QComboBox(hero); self.preset_combo.addItems(["Preset…", *[p.name for p in PROFILE_PRESETS]])
+        self.preset_combo = QComboBox(hero)
+        self.preset_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preset_combo.setMinimumContentsLength(14)
+        self.preset_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.preset_combo.addItems(["Preset…", *[p.name for p in PROFILE_PRESETS]])
         apply_preset = SecondaryButton("Apply Preset", hero); apply_preset.clicked.connect(self._apply_preset_from_combo)
         reset_defaults = SecondaryButton("Reset to defaults", hero); reset_defaults.clicked.connect(self._reset_to_defaults)
         start = SuccessButton("Start", hero); start.clicked.connect(self._start)
-        stop = DangerButton("Stop", hero); stop.clicked.connect(self._stop)
+        self._stop_button = DangerButton("Stop", hero); self._stop_button.clicked.connect(self._stop)
         restart = SecondaryButton("Restart", hero); restart.clicked.connect(self._restart)
         switch = SecondaryButton("Load via API / Restart fallback", hero); switch.clicked.connect(self._switch_model)
+        self._switch_button = switch
 
-        # Two action rows: primary on top (Start/Stop/Restart/Switch), metadata on bottom.
-        primary_actions = QHBoxLayout()
-        for widget in (start, stop, restart, switch):
+        # Wrapping action rows keep controls reachable in narrower windows.
+        primary_actions_widget = QWidget(hero)
+        primary_actions = FlowLayout(primary_actions_widget, hspacing=8, vspacing=8)
+        for widget in (start, self._stop_button, restart, switch):
             primary_actions.addWidget(widget)
-        primary_actions.addStretch(1)
 
-        meta_actions = QHBoxLayout()
+        meta_actions_widget = QWidget(hero)
+        self._meta_actions_widget = meta_actions_widget
+        meta_actions = FlowLayout(meta_actions_widget, hspacing=8, vspacing=8)
         for widget in (save, save_as, duplicate, reset, self.preset_combo, apply_preset, reset_defaults):
             meta_actions.addWidget(widget)
-        meta_actions.addStretch(1)
 
-        layout.addLayout(primary_actions)
-        layout.addLayout(meta_actions)
+        layout.addWidget(primary_actions_widget)
+        layout.addWidget(meta_actions_widget)
 
         stats = QHBoxLayout()
         self.state_tile = FieldTile("State", "stopped", hero)
@@ -259,15 +307,20 @@ class RunPage(PageBase):
             )
             schema_info.setObjectName("Muted")
             schema_info.setWordWrap(True)
+            schema_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             layout.addWidget(schema_info)
 
+        self._build_router_panel()
+        layout.addWidget(self._router_panel)
         self.status = QLabel("Stopped.", hero)
         self.status.setObjectName("Muted")
         self.status.setWordWrap(True)
+        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.status)
         self.command = QPlainTextEdit(hero)
         self.command.setReadOnly(True)
         self.command.setMaximumHeight(100)
+        self.command.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.command)
         self._layout.addWidget(hero)
 
@@ -334,6 +387,7 @@ class RunPage(PageBase):
                 extras_row.addWidget(option_card)
             extras_row.addStretch(1)
             layout.addLayout(extras_row)
+        self._main_settings_card = card
         self._layout.addWidget(card)
 
     def _build_advanced_groups(self) -> None:
@@ -352,7 +406,8 @@ class RunPage(PageBase):
         self._advanced_toggle_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._advanced_toggle_btn.setArrowType(Qt.DownArrow)
         self._advanced_toggle_btn.setObjectName("AdvancedToggleBtn")
-        self._advanced_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._advanced_toggle_btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._advanced_toggle_btn.setMaximumWidth(220)
         # Search + filter pill: moved out of the body so they stay visible
         # even when the panel is collapsed (so the user can find/filter
         # options when re-opening).
@@ -395,19 +450,34 @@ class RunPage(PageBase):
         self._advanced_toggle_btn.toggled.connect(_toggle_advanced)
         layout.addWidget(header_row)
         layout.addWidget(self._advanced_body)
+        self._advanced_card = card
         self._layout.addWidget(card)
     def _refit_advanced_panel(self) -> None:
         """Resize the advanced card to fit the **active** tab's content.
 
-        Each tab page is sized independently. Inactive pages are squashed
-        to 0 px so the QTabWidget sizes itself to only the active page
-        plus its tab bar.
+        When the body is collapsed, sizes the card to just the header row.
+        When expanded, sizes to the active tab page + tab bar + header.
         """
 
         def _do() -> None:
             try:
                 if not self._advanced_tabs:
                     return
+                card = self._advanced_body.parentWidget()
+                if card is None:
+                    return
+                card_layout = card.layout()
+                card_m = card_layout.contentsMargins()
+                header = card_layout.itemAt(0).widget()
+                header_h = header.height() if header else 0
+
+                if not self._advanced_body.isVisible():
+                    # Collapsed: just header + card margins.
+                    card_h = header_h + card_m.top() + card_m.bottom()
+                    card.setMinimumHeight(card_h)
+                    card.setMaximumHeight(card_h)
+                    return
+
                 active_index = self._advanced_tabs.currentIndex()
                 if active_index < 0:
                     return
@@ -451,21 +521,15 @@ class RunPage(PageBase):
                 self._advanced_body.setMaximumHeight(body_h)
 
                 # Card height = header + body + spacing + card margins.
-                card = self._advanced_body.parentWidget()
-                if card is not None:
-                    card_layout = card.layout()
-                    card_m = card_layout.contentsMargins()
-                    header = card_layout.itemAt(0).widget()
-                    header_h = header.height() if header else 0
-                    card_h = (
-                        body_h
-                        + header_h
-                        + card_layout.spacing()
-                        + card_m.top()
-                        + card_m.bottom()
-                    )
-                    card.setMinimumHeight(card_h)
-                    card.setMaximumHeight(card_h)
+                card_h = (
+                    body_h
+                    + header_h
+                    + card_layout.spacing()
+                    + card_m.top()
+                    + card_m.bottom()
+                )
+                card.setMinimumHeight(card_h)
+                card.setMaximumHeight(card_h)
             except Exception:
                 return
 
@@ -621,8 +685,143 @@ class RunPage(PageBase):
         self.logs.setReadOnly(True)
         self.logs.setMaximumBlockCount(10000)
         self.logs.setMaximumHeight(260)
+        self.logs.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         logs_layout.addWidget(self.logs)
         self._layout.addWidget(logs)
+
+    # ------------------------------------------------------------------
+    # Mode / router panel
+    # ------------------------------------------------------------------
+
+    def _on_mode_changed(self, index: int) -> None:
+        is_router = index == 1
+        config = self.config_store.load()
+        # Stop server if running when switching modes
+        if self.controller.status.is_running:
+            self._stop()
+        config.router_mode = is_router
+        self.config_store.save(config)
+        self._apply_mode_visibility()
+        self._update_command_preview()
+
+    def _apply_mode_visibility(self) -> None:
+        config = self.config_store.load()
+        is_router = config.router_mode
+        self._model_label.setVisible(not is_router)
+        self.model_combo.setVisible(not is_router)
+        self._profile_label.setVisible(not is_router)
+        self.profile_combo.setVisible(not is_router)
+        self._meta_actions_widget.setVisible(not is_router)
+        self._switch_button.setVisible(not is_router)
+        if hasattr(self, "_main_settings_card"):
+            card = self._main_settings_card
+            card.setVisible(not is_router)
+            if is_router:
+                card.setMinimumHeight(0)
+                card.setMaximumHeight(16777215)
+        if hasattr(self, "_advanced_card"):
+            card = self._advanced_card
+            card.setVisible(not is_router)
+            if is_router:
+                # Remove fixed-height constraints from _refit_advanced_panel.
+                card.setMinimumHeight(0)
+                card.setMaximumHeight(16777215)
+                self._advanced_body.setMinimumHeight(0)
+                self._advanced_body.setMaximumHeight(16777215)
+            else:
+                # Reset tab page constraints so minimumSizeHint is correct.
+                for i in range(self._advanced_tabs.count()):
+                    p = self._advanced_tabs.widget(i)
+                    if p is not None:
+                        p.setMinimumHeight(0)
+                        p.setMaximumHeight(16777215)
+                self._refit_advanced_panel()
+        if hasattr(self, "_router_panel"):
+            self._router_panel.setVisible(is_router)
+
+    def _build_router_panel(self) -> None:
+        config = self.config_store.load()
+        self._router_panel = QWidget(self._header_card)
+        layout = QVBoxLayout(self._router_panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        dir_label = QLabel(f"Models directory: {config.models_dir or '—'}", self._router_panel)
+        dir_label.setObjectName("Muted")
+        dir_label.setWordWrap(True)
+        dir_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout.addWidget(dir_label)
+
+        max_row = QHBoxLayout()
+        max_row.addWidget(QLabel("Max loaded models:", self._router_panel))
+        self._models_max_spin = QSpinBox(self._router_panel)
+        self._models_max_spin.setRange(1, 32)
+        self._models_max_spin.setValue(4)
+        self._models_max_spin.valueChanged.connect(self._update_command_preview)
+        max_row.addWidget(self._models_max_spin)
+        max_row.addStretch(1)
+        layout.addLayout(max_row)
+
+        layout.addWidget(QLabel("Loaded Models:", self._router_panel))
+        self._loaded_models_container = QWidget(self._router_panel)
+        self._loaded_models_container.setLayout(QVBoxLayout())
+        self._loaded_models_container.layout().setContentsMargins(0, 0, 0, 0)
+        self._loaded_models_container.layout().setSpacing(4)
+        layout.addWidget(self._loaded_models_container)
+        layout.addStretch(1)
+
+        self._router_panel.setVisible(False)
+
+    def _poll_router_models(self) -> None:
+        try:
+            host, port = self._effective_host_port()
+            client = LlamaServerApiClient(host, port)
+            models = client.list_loaded_models()
+            container = self._loaded_models_container
+            panel_layout = container.layout()
+            # Clear previous rows.
+            while panel_layout.count():
+                item = panel_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            if not models:
+                placeholder = QLabel("No models discovered.", container)
+                placeholder.setObjectName("Muted")
+                panel_layout.addWidget(placeholder)
+                return
+            for model in models:
+                model_id = model.get("id", "unknown")
+                # The /models endpoint may return "size" or other fields
+                # but the key status/state field varies by llama-server version.
+                # Try common keys: "status", "state", or infer from "object".
+                status = model.get("status") or model.get("state", "unknown")
+                row = QHBoxLayout()
+                name_label = ElidedLabel(
+                    f"{model_id}  ({status})",
+                    container,
+                )
+                name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+                row.addWidget(name_label, 1)
+                if status in ("loaded", "loading"):
+                    unload_btn = SecondaryButton("Unload", container)
+                    unload_btn.clicked.connect(
+                        lambda _checked=False, mid=model_id: self._unload_model(mid)
+                    )
+                    row.addWidget(unload_btn)
+                row_widget = QWidget(container)
+                row_widget.setLayout(row)
+                panel_layout.addWidget(row_widget)
+        except Exception:
+            pass
+
+    def _unload_model(self, model_name: str) -> None:
+        try:
+            host, port = self._effective_host_port()
+            client = LlamaServerApiClient(host, port)
+            client.unload_model(model_name)
+            self._poll_router_models()
+        except Exception as exc:
+            self.status.setText(f"Unload failed: {exc}")
 
     # ------------------------------------------------------------------
     # Editor factories
@@ -1051,8 +1250,10 @@ class RunPage(PageBase):
     # ------------------------------------------------------------------
 
     def _reload_models(self) -> None:
+        from ..services.library_scan import is_companion_gguf
         self._models = sorted(
-            self.library_store.load(), key=lambda m: m.path.casefold()
+            (m for m in self.library_store.load() if not is_companion_gguf(Path(m.path))),
+            key=lambda m: m.path.casefold(),
         )
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -1121,15 +1322,7 @@ class RunPage(PageBase):
 
     def _effective_host_port(self) -> tuple[str, int]:
         config = self.config_store.load()
-        host = config.host
-        port = config.port
-        host_widget = self._editors.get("host")
-        port_widget = self._editors.get("port")
-        if host_widget is not None:
-            host = str(self._editor_value(LLAMA_OPTION_CATALOG.get("host"), host_widget) or host)
-        if port_widget is not None:
-            port = int(self._editor_value(LLAMA_OPTION_CATALOG.get("port"), port_widget) or port)
-        return host, port
+        return config.host, config.port
 
     # ------------------------------------------------------------------
     def _save_profile(self) -> None:
@@ -1325,8 +1518,29 @@ class RunPage(PageBase):
         config = self.config_store.load()
         model = self._selected_model()
         profile = self._selected_profile()
-        if model is None:
+        if model is None and not config.router_mode:
             raise RuntimeError("No model selected. Add a model in Library first.")
+        # Router mode: just serve the directory, no model/profile needed.
+        if config.router_mode:
+            preset_path: str | None = None
+            if config.models_dir:
+                all_models = self.library_store.load()
+                all_profiles = self.profile_store.load()
+                defaults = {
+                    p.model_id: p
+                    for p in all_profiles
+                    if p.is_default
+                }
+                preset_path = generate_models_preset(
+                    all_models, defaults, config.models_dir,
+                )
+            models_max = getattr(self, "_models_max_spin", None)
+            models_max_val = models_max.value() if models_max else 0
+            return build_argv(
+                config, model or LocalModel(id="", path=""),
+                models_preset_path=preset_path,
+                models_max=models_max_val,
+            )
         # IMPORTANT: do not mutate ``profile`` here. This method is
         # called from ``_set_editor_value`` during ``_load_profile_into_form``
         # (and from any editor's ``textChanged``). Mutating the profile
@@ -1383,8 +1597,8 @@ class RunPage(PageBase):
                 self._argv(),
                 host,
                 port,
-                model_path=model.path if model else None,
-                profile_name=profile.name if profile else None,
+                model_path=config.models_dir if config.router_mode else (model.path if model else None),
+                profile_name=profile.name if (profile and not config.router_mode) else None,
             )
             if model is not None:
                 from llama_data.models import utc_now
@@ -1398,10 +1612,22 @@ class RunPage(PageBase):
             self.status.setText(f"Start failed: {exc}")
 
     def _stop(self) -> None:
-        try:
-            self._set_status(self.controller.stop())
-        except Exception as exc:
-            self.status.setText(f"Stop failed: {exc}")
+        self._stop_button.setEnabled(False)
+        self.status.setText("Stopping llama-server…")
+        self._stop_thread = _StopThread(self.controller, self)
+        self._stop_thread.completed.connect(self._on_stop_completed, Qt.ConnectionType.QueuedConnection)
+        self._stop_thread.failed.connect(self._on_stop_failed, Qt.ConnectionType.QueuedConnection)
+        self._stop_thread.finished.connect(self._stop_thread.deleteLater)
+        self._stop_thread.start()
+
+    def _on_stop_completed(self, status) -> None:
+        self._stop_button.setEnabled(True)
+        self._set_status(status)
+        self.status.setText("llama-server stopped.")
+
+    def _on_stop_failed(self, message: str) -> None:
+        self._stop_button.setEnabled(True)
+        self.status.setText(f"Stop failed: {message}")
 
     def _restart(self) -> None:
         try:
@@ -1438,6 +1664,16 @@ class RunPage(PageBase):
             self.controller.note_model_switched(model.path, self._selected_profile().name if self._selected_profile() else None)
             self.status.setText(result.message)
 
+    def _try_attach_existing(self) -> None:
+        """On startup, check if llama-server is already running and attach."""
+        config = self.config_store.load()
+        host, port = self._effective_host_port()
+        if self.controller.try_attach(host, port):
+            self.status.setText(
+                f"Attached to existing llama-server on {host}:{port}"
+            )
+            self._update_command_preview()
+
     # ------------------------------------------------------------------
     # Polling / logs
     # ------------------------------------------------------------------
@@ -1447,6 +1683,9 @@ class RunPage(PageBase):
         if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
             self.controller.poll_health()
             status = self.controller.status
+            config = self.config_store.load()
+            if config.router_mode:
+                self._poll_router_models()
         self._set_status(status)
         self._render_logs()
         self.inspector_changed.emit({

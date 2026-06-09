@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
 )
@@ -53,7 +54,9 @@ class SettingsPage(PageBase):
 
         # --- Card 3: Connection settings ---
         self._build_connection_card()
-        # --- Card 4: Global defaults ---
+        # --- Card 4: Server Mode ---
+        self._build_server_mode_card()
+        # --- Card 5: Global defaults ---
         self._build_global_defaults_card()
 
         # --- Card 5: Hugging Face token ---
@@ -129,7 +132,8 @@ class SettingsPage(PageBase):
         grid.addWidget(host_label, 0, 0)
         self._host_input = QLineEdit(card)
         self._host_input.setText(self._config.host if self._config else "127.0.0.1")
-        self._host_input.setMaximumWidth(320)
+        self._host_input.setFixedWidth(180)
+        grid.addWidget(self._host_input, 0, 1)
         port_label = QLabel("Port", card)
         port_label.setObjectName("Muted")
         port_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -137,11 +141,52 @@ class SettingsPage(PageBase):
         self._port_input = QSpinBox(card)
         self._port_input.setRange(1, 65535)
         self._port_input.setValue(self._config.port if self._config else 8080)
-        self._port_input.setMaximumWidth(320)
+        self._port_input.setFixedWidth(120)
         grid.addWidget(self._port_input, 1, 1)
+        grid.setColumnStretch(2, 1)
 
         layout.addLayout(grid)
         self._layout.addWidget(card)
+
+    def _build_server_mode_card(self) -> None:
+        card = Card(self._body)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        layout.addWidget(CardTitle("Server Mode", card))
+
+        hint = QLabel(
+            "Router mode serves all models from your models directory. "
+            "Remote clients can list and switch models through llama-server's "
+            "built-in /v1/models endpoint — no extra configuration needed.",
+            card,
+        )
+        hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # Router mode toggle
+        self._router_mode_check = QCheckBox("Enable router mode (--models-dir)", card)
+        self._router_mode_check.setChecked(self._config.router_mode if self._config else False)
+        self._router_mode_check.toggled.connect(self._on_router_mode_toggled)
+        layout.addWidget(self._router_mode_check)
+
+        # Models dir row
+        dir_row = QHBoxLayout()
+        dir_label = QLabel("Models dir", card)
+        dir_label.setObjectName("Muted")
+        dir_row.addWidget(dir_label)
+        self._models_dir_input = QLineEdit(card)
+        self._models_dir_input.setText(self._config.models_dir or "")
+        self._models_dir_input.setPlaceholderText("e.g. /home/you/Downloads/models")
+        dir_row.addWidget(self._models_dir_input, 1)
+        layout.addLayout(dir_row)
+
+        self._layout.addWidget(card)
+
+    def _on_router_mode_toggled(self, checked: bool) -> None:
+        self._models_dir_input.setEnabled(checked)
 
     def _build_global_defaults_card(self) -> None:
         card = Card(self._body)
@@ -159,12 +204,15 @@ class SettingsPage(PageBase):
             lbl = QLabel(label, card)
             lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(lbl, row, 0)
-            widget.setMaximumWidth(320)
+            widget.setFixedWidth(120)
             grid.addWidget(widget, row, 1)
             value = self._config.global_settings.get(option_id) if self._config else None
             if value is not None and value.value is not None:
-                if isinstance(widget, QDoubleSpinBox): widget.setValue(float(value.value))
-                else: widget.setValue(int(value.value))
+                if isinstance(widget, QDoubleSpinBox):
+                    widget.setValue(float(value.value))
+                else:
+                    widget.setValue(int(value.value))
+        grid.setColumnStretch(2, 1)
         layout.addLayout(grid)
         self._layout.addWidget(card)
 
@@ -204,6 +252,8 @@ class SettingsPage(PageBase):
 
         # Feedback
         self._token_feedback = QLabel("", card)
+        self._token_feedback.setWordWrap(True)
+        self._token_feedback.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._token_feedback.setObjectName("Muted")
         layout.addWidget(self._token_feedback)
 
@@ -212,6 +262,7 @@ class SettingsPage(PageBase):
             "If the HF_TOKEN environment variable is set, it is detected automatically.",
             card,
         )
+        hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -227,11 +278,13 @@ class SettingsPage(PageBase):
         layout.addWidget(CardTitle("Binary Introspection", card))
 
         self._summary = QLabel("No binary parsed yet.", card)
+        self._summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._summary.setObjectName("Muted")
         self._summary.setWordWrap(True)
         layout.addWidget(self._summary)
 
         self._details = QPlainTextEdit(card)
+        self._details.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._details.setReadOnly(True)
         self._details.setMaximumHeight(220)
         layout.addWidget(self._details)
@@ -243,6 +296,8 @@ class SettingsPage(PageBase):
         row.addStretch()
 
         self._save_feedback = QLabel("", self._body)
+        self._save_feedback.setWordWrap(True)
+        self._save_feedback.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._save_feedback.setObjectName("Muted")
         row.addWidget(self._save_feedback)
 
@@ -294,6 +349,7 @@ class SettingsPage(PageBase):
             port=port,
             hf_token_source=token_source,
             global_settings=global_settings,
+            router_mode=self._router_mode_check.isChecked() if hasattr(self, '_router_mode_check') else (self._config.router_mode if self._config else False),
             selected_model_id=self._config.selected_model_id if self._config else None,
             selected_profile_id=self._config.selected_profile_id if self._config else None,
         )
@@ -374,6 +430,7 @@ class SettingsPage(PageBase):
             self._show_token_feedback("Token cleared.")
         except Exception as exc:
             self._show_token_feedback(f"Failed: {exc}")
+
 
     # ------------------------------------------------------------------
     # UI helpers

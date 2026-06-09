@@ -33,6 +33,7 @@ from app.services.runtime import (  # noqa: E402
     RuntimeStatus,
     ServerState,
     build_argv,
+    generate_models_preset,
     is_port_available,
 )
 from app.services.runtime_api import (  # noqa: E402
@@ -354,6 +355,128 @@ def test_package_exports() -> None:
     check(callable(build_argv), "build_argv callable")
     check(callable(is_port_available), "is_port_available callable")
 
+# ---- Models preset generation -------------------------------------------
+
+
+def test_generate_models_preset_basic() -> None:
+    print("[preset] basic INI generation from profiles")
+    with tempfile.TemporaryDirectory() as td:
+        models_dir = Path(td) / "models"
+        models_dir.mkdir()
+        m1 = models_dir / "gemma-3-4b-it-Q4_K_M.gguf"
+        m2 = models_dir / "qwen3-30b-Q5_K_M.gguf"
+        m1.write_bytes(b"\x00" * 16)
+        m2.write_bytes(b"\x00" * 16)
+
+        lib_models = [
+            LocalModel(id=str(m1.resolve()), path=str(m1.resolve())),
+            LocalModel(id=str(m2.resolve()), path=str(m2.resolve())),
+        ]
+
+        # Profile for gemma: custom n_gpu_layers and ctx_size.
+        gemma_settings = SettingValueMap({
+            "n_gpu_layers": LlamaOptionValue(OptionKind.INTEGER, 99),
+            "ctx_size": LlamaOptionValue(OptionKind.INTEGER, 65536),
+        })
+        gemma_profile = ModelProfile(
+            id="p1", model_id=lib_models[0].id, name="default",
+            settings=gemma_settings,
+            user_set={"n_gpu_layers", "ctx_size"},
+            is_default=True,
+        )
+        defaults = {lib_models[0].id: gemma_profile}
+
+        ini_path = generate_models_preset(lib_models, defaults, str(models_dir))
+        check(ini_path is not None, "preset path returned")
+        check(Path(ini_path).exists(), "INI file created on disk")
+
+        content = Path(ini_path).read_text()
+        check("[gemma-3-4b-it-Q4_K_M]" in content, "section header for gemma")
+        check("n-gpu-layers = 99" in content, "n_gpu_layers written")
+        check("ctx-size = 65536" in content, "ctx_size written")
+        check(str(m1.resolve()) in content, "model path in section")
+        check("[qwen3-30b-Q5_K_M]" not in content, "no section for qwen (no profile)")
+
+        # Cleanup
+        Path(ini_path).unlink(missing_ok=True)
+
+
+def test_generate_models_preset_none_when_empty() -> None:
+    print("[preset] returns None when no models have custom profiles")
+    with tempfile.TemporaryDirectory() as td:
+        models_dir = Path(td) / "models"
+        models_dir.mkdir()
+        m1 = models_dir / "test.gguf"
+        m1.write_bytes(b"\x00" * 16)
+
+        lib_models = [LocalModel(id=str(m1.resolve()), path=str(m1.resolve()))]
+        # No profiles → None.
+        ini_path = generate_models_preset(lib_models, {}, str(models_dir))
+        check(ini_path is None, "returns None when no defaults")
+
+
+def test_generate_models_preset_only_defaults() -> None:
+    print("[preset] skips profile with only catalog-default values")
+    with tempfile.TemporaryDirectory() as td:
+        models_dir = Path(td) / "models"
+        models_dir.mkdir()
+        m1 = models_dir / "test.gguf"
+        m1.write_bytes(b"\x00" * 16)
+
+        lib_models = [LocalModel(id=str(m1.resolve()), path=str(m1.resolve()))]
+        # Profile with default values only.
+        settings = SettingValueMap({
+            "n_gpu_layers": LlamaOptionValue(OptionKind.INTEGER, 0),  # catalog default
+        })
+        profile = ModelProfile(
+            id="p1", model_id=lib_models[0].id, name="default",
+            settings=settings, user_set={"n_gpu_layers"}, is_default=True,
+        )
+        ini_path = generate_models_preset(lib_models, {lib_models[0].id: profile}, str(models_dir))
+        check(ini_path is None, "returns None when only catalog defaults")
+
+
+def test_build_argv_with_preset() -> None:
+    print("[argv] router mode with models-preset")
+    with tempfile.TemporaryDirectory() as td:
+        models_dir = Path(td) / "models"
+        models_dir.mkdir()
+        config = AppConfig(
+            llama_server_path="/bin/true",
+            host="0.0.0.0",
+            port=8080,
+            router_mode=True,
+            models_dir=str(models_dir),
+        )
+        model = LocalModel(id="", path="")
+
+        argv = build_argv(config, model, models_preset_path="/tmp/preset.ini")
+        check("--models-dir" in argv, "--models-dir present")
+        check("--models-preset" in argv, "--models-preset present")
+        check("/tmp/preset.ini" in argv, "preset path in argv")
+        # No --model in router mode.
+        check("--model" not in argv, "--model absent in router mode")
+
+
+def test_build_argv_router_no_preset() -> None:
+    print("[argv] router mode without preset (backward compat)")
+    with tempfile.TemporaryDirectory() as td:
+        models_dir = Path(td) / "models"
+        models_dir.mkdir()
+        config = AppConfig(
+            llama_server_path="/bin/true",
+            host="0.0.0.0",
+            port=8080,
+            router_mode=True,
+            models_dir=str(models_dir),
+        )
+        model = LocalModel(id="", path="")
+
+        argv = build_argv(config, model)
+        check("--models-dir" in argv, "--models-dir present")
+        check("--models-preset" not in argv, "--models-preset absent when not passed")
+
+
 
 # ---- Main ----------------------------------------------------------------
 
@@ -375,6 +498,11 @@ def main() -> int:
     test_poll_health_no_server()
     test_status_is_copy()
     test_package_exports()
+    test_generate_models_preset_basic()
+    test_generate_models_preset_none_when_empty()
+    test_generate_models_preset_only_defaults()
+    test_build_argv_with_preset()
+    test_build_argv_router_no_preset()
     print("\n=== All Phase 8 smoke tests passed ===")
     return 0
 

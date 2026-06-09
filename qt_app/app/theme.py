@@ -111,6 +111,22 @@ def build_stylesheet() -> str:
         background-color: rgba(109, 40, 217, 0.14);
         border-left: 3px solid {ACCENT};
     }}
+    QFrame#SidebarStatus {{
+        background-color: {BG_PANEL_ALT};
+        border-top: 1px solid {BORDER_SOFT};
+    }}
+    QLabel#SidebarStatusTitle {{
+        color: {FG_PRIMARY};
+        font-weight: 700;
+    }}
+    QLabel#SidebarStatusChip {{
+        color: {FG_SECONDARY};
+        background-color: {BG_INSET};
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 6px;
+        padding: 3px 6px;
+    }}
+
 
     /* --- Header bar --- */
     QFrame#Header {{

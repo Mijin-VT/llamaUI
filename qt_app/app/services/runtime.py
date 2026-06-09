@@ -25,9 +25,11 @@ from typing import Callable, Deque, List, Optional, Sequence
 # Health poll interval (seconds) and per-request timeout (seconds).
 # These are used by the background health-polling thread.
 _HEALTH_INTERVAL = 1.0
+import os as _os
+
 _HEALTH_TIMEOUT = 2.0
 
-from llama_data import AppConfig, LLAMA_OPTION_CATALOG, LocalModel, ModelProfile, clean_raw_args
+from llama_data import AppConfig, LLAMA_OPTION_CATALOG, LocalModel, ModelProfile, OptionKind, clean_raw_args, default_data_dir
 
 from .runtime_api import ApiStatus, LlamaServerApiClient
 
@@ -137,36 +139,133 @@ def is_port_available(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) != 0
 
 
+
+def generate_models_preset(
+    library_models: Sequence[LocalModel],
+    profile_defaults: dict[str, ModelProfile],
+    models_dir: str,
+) -> str:
+    """Write a ``--models-preset`` INI listing every runnable model.
+
+    Companion GGUFs (mmproj, text-encoder, etc.) are excluded so they
+    never appear as selectable models.  Every real model gets a section
+    with at least ``model = /path`` and ``mmproj = /path`` (if detected).
+    Profile settings are overlaid on top when available.
+
+    Because every model is explicitly listed, llama-server does not need
+    ``--models-dir`` — the preset alone defines the full model catalogue.
+    """
+    from ..services.library_scan import is_companion_gguf
+
+    sections: list[str] = []
+    models_dir_resolved = Path(models_dir).resolve()
+
+    for model in library_models:
+        model_path = Path(model.path).resolve()
+        try:
+            model_path.relative_to(models_dir_resolved)
+        except ValueError:
+            continue
+
+        # Skip companion GGUFs (mmproj, text-encoder, etc.).
+        if is_companion_gguf(model_path):
+            continue
+
+        profile = profile_defaults.get(model.id)
+        entries: list[str] = [f"model = {model.path}"]
+        mmproj_written = False
+
+        if profile is not None:
+            user_set = getattr(profile, "user_set", None) or set()
+            skip_ids = {"model", "host", "port", "extra_args"}
+            for option_id, value in profile.settings.items():
+                if option_id in skip_ids or option_id not in user_set:
+                    continue
+                option = LLAMA_OPTION_CATALOG.get(option_id)
+                if option is None:
+                    continue
+                if option.default is not None and value.value == option.default.value:
+                    continue
+                if option.default is None and value.value in (False, 0, 0.0, "", [], None):
+                    continue
+                ini_key = option.flag.lstrip("-")
+                if option_id == "mmproj":
+                    mmproj_written = True
+                if value.kind is OptionKind.BOOLEAN:
+                    ini_val = "true" if value.value else "false"
+                else:
+                    ini_val = str(value.value)
+                entries.append(f"{ini_key} = {ini_val}")
+
+            raw = clean_raw_args(profile.raw_args)
+            i = 0
+            while i < len(raw):
+                tok = raw[i]
+                if tok.startswith("--"):
+                    ini_key = tok.lstrip("-")
+                    if ini_key == "mmproj":
+                        mmproj_written = True
+                    if i + 1 < len(raw) and not raw[i + 1].startswith("--"):
+                        entries.append(f"{ini_key} = {raw[i + 1]}")
+                        i += 2
+                    else:
+                        entries.append(f"{ini_key} = true")
+                        i += 1
+                else:
+                    i += 1
+
+        # Auto-attach mmproj from the library record if not already set.
+        if not mmproj_written and model.mmproj_path:
+            entries.append(f"mmproj = {model.mmproj_path}")
+
+        section_name = model_path.stem
+        section = f"[{section_name}]\n" + "\n".join(entries)
+        sections.append(section)
+
+    ini_path = default_data_dir() / "models-preset.ini"
+    ini_path.parent.mkdir(parents=True, exist_ok=True)
+    ini_path.write_text("\n\n".join(sections) + "\n" if sections else "",
+                        encoding="utf-8")
+    return str(ini_path)
+
+
 def build_argv(
     config: AppConfig,
     model: LocalModel,
     profile: Optional[ModelProfile] = None,
+    *,
+    models_preset_path: Optional[str] = None,
+    models_max: int = 0,
 ) -> list[str]:
     """Build the full argv for llama-server from config, model, and profile.
-
     Model path, host, and port from *config* always take precedence over
     profile settings to avoid confusing mismatches.
+
+    When *models_preset_path* is provided (router mode), ``--models-preset``
+    is appended to the argv so each model inherits its per-profile settings.
     """
     if not config.llama_server_path:
         raise ValueError("llama-server path is not configured")
 
     host = config.host
     port = config.port
-    if profile is not None:
-        host_value = profile.settings.get("host")
-        port_value = profile.settings.get("port")
-        if host_value and host_value.value:
-            host = str(host_value.value)
-        if port_value and port_value.value is not None:
-            port = int(port_value.value)
     argv = [
         config.llama_server_path,
-        "--model", model.path,
         "--host", host,
         "--port", str(port),
     ]
 
-    # Global defaults first.
+    # Router mode: models are defined by the preset INI (no --models-dir).
+    # Single-model mode: serve one specific .gguf file.
+    if not config.router_mode:
+        argv.extend(["--model", model.path])
+    # Per-model preset for router mode.
+    if models_preset_path:
+        argv.extend(["--models-preset", models_preset_path])
+
+    # Router mode: max simultaneously loaded models.
+    if models_max > 0:
+        argv.extend(["--models-max", str(models_max)])
     argv.extend(config.global_settings.to_argv(LLAMA_OPTION_CATALOG))
 
     # Profile settings overlay — only include user-explicitly-set values
@@ -230,6 +329,38 @@ class LlamaServerController:
         with self._lock:
             self._sync_state()
             return RuntimeStatus(**self._status.__dict__)
+
+    def try_attach(self, host: str, port: int) -> bool:
+        """Try to attach to an already-running llama-server on *host*:*port*.
+
+        Returns True if a healthy llama-server was found and the controller
+        is now attached (state = HEALTHY).  Returns False if nothing was
+        found — the caller should ``start()`` a fresh server.
+
+        On attach, the controller does NOT own the process (``_process`` is
+        ``None``), so ``stop()`` will need to discover the PID via
+        ``lsof``/``ss``.  Health polling is started so the UI updates live.
+        """
+        client = LlamaServerApiClient(host=host, port=port, timeout=2.0)
+        api_status = client.status()
+        if not api_status.reachable:
+            return False
+
+        with self._lock:
+            self._log_session += 1
+            self.log_buffer.clear()
+            self._api_client = client
+            self._status = RuntimeStatus(
+                state=ServerState.HEALTHY,
+                command=[],
+                host=host,
+                port=port,
+                model_path=None,
+                profile_name=None,
+                api_status=api_status,
+            )
+            self._start_health_poll(host, port)
+        return True
 
     def start(
         self,
@@ -311,13 +442,34 @@ class LlamaServerController:
         with self._lock:
             stop_event = self._stop_health
             proc = self._process
+            host = self._status.host
+            port = self._status.port
+            # Attached to an external server (no _process) — find its PID.
+            if proc is None and self._status.state in (
+                ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY,
+            ):
+                stop_event.set()
+                pid = self._find_pid_for_port(host, port)
+                if pid is None:
+                    self._status.state = ServerState.STOPPED
+                    self._api_client = None
+                    return self._status_copy_unlocked()
+                # Kill the external process.
+                self._status.state = ServerState.STOPPING
+                self._kill_external(pid, graceful_timeout, kill_timeout)
+                self._status.state = ServerState.STOPPED
+                self._status.pid = None
+                self._api_client = None
+                return self._status_copy_unlocked()
             if not proc or proc.poll() is not None:
+                stop_event.set()
                 self._status.state = ServerState.STOPPED
                 self._status.exit_code = proc.returncode if proc else None
                 self._status.pid = None
                 self._process = None
                 self._api_client = None
-            return self._status_copy_unlocked()
+                return self._status_copy_unlocked()
+            self._status.state = ServerState.STOPPING
         # Signal the health-poll thread to stop. ``stop_event`` is the
         # per-session event captured above under the lock, so a
         # concurrent ``_start_health_poll`` cannot replace it from
@@ -330,8 +482,8 @@ class LlamaServerController:
             pgid = os.getpgid(pid)
         except ProcessLookupError:
             pgid = pid
-        self._status.state = ServerState.STOPPING
-
+        with self._lock:
+            self._status.state = ServerState.STOPPING
         # Helper that sends a signal to the whole process group
         # on POSIX, or falls back to a single-process kill on
         # Windows (where ``os.killpg`` is not available).
@@ -410,19 +562,19 @@ class LlamaServerController:
         return self.start(argv, host, port, model_path, profile_name)
 
     def poll_health(self) -> ApiStatus:
-        """One-shot health check against the running server's API.
-
-        Holds ``self._lock`` for the full sequence so a concurrent
-        ``start`` cannot replace ``_api_client`` and ``_status`` between
-        the read and the write. The lock is also held during the HTTP
-        call (up to ``_HEALTH_TIMEOUT`` seconds), which serializes
-        status updates with server lifecycle changes.
-        """
+        """One-shot health check against the running server's API."""
         with self._lock:
             client = self._api_client
+            process = self._process
             if client is None:
                 return ApiStatus(reachable=False, error="no running server")
-            status = client.status()
+        if process is not None and process.poll() is not None:
+            return ApiStatus(reachable=False, error="server process exited")
+
+        status = client.status()
+        with self._lock:
+            if client is not self._api_client:
+                return status
             self._status.api_status = status
             if self._status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
                 self._status.state = (
@@ -442,8 +594,9 @@ class LlamaServerController:
             client = self._api_client
         if client is None:
             return SwitchResult(
-                used_api=False,
+                switched=False,
                 restart_required=True,
+                unreachable=False,
                 message="no running server; start first",
             )
         return client.switch_model(model_path)
@@ -455,6 +608,84 @@ class LlamaServerController:
                 self._status.profile_name = profile_name
 
     # -- internal -----------------------------------------------------------
+
+    @staticmethod
+    def _find_pid_for_port(host: str, port: int) -> Optional[int]:
+        """Find the PID of the process listening on *host*:*port*.
+
+        Uses ``ss`` (available on all modern Linux) or falls back to
+        ``lsof``.  Returns None if nothing is found.
+        """
+        port_str = str(port)
+        # Try ss first (fast, common on Linux).
+        try:
+            out = subprocess.run(
+                ["ss", "-tlnp", f"sport = :{port_str}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in out.stdout.splitlines():
+                # ss output: "... pid=1234 ..."
+                m = re.search(r"pid=(\d+)", line)
+                if m:
+                    return int(m.group(1))
+        except Exception:
+            pass
+        # Fallback: lsof.
+        try:
+            out = subprocess.run(
+                ["lsof", "-i", f":{port_str}", "-t", "-sTCP:LISTEN"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in out.stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    return int(line)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _kill_external(pid: int, graceful: float = 5.0, force: float = 3.0) -> None:
+        """Kill an external process by PID with SIGTERM → SIGKILL fallback."""
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return
+
+        def _sig(sig: int) -> None:
+            if sys.platform == "win32":
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+            else:
+                try:
+                    os.killpg(pgid, sig)
+                except (ProcessLookupError, PermissionError):
+                    try:
+                        os.kill(pid, sig)
+                    except ProcessLookupError:
+                        pass
+
+        _sig(signal.SIGTERM)
+        # Poll for exit.
+        import time
+        deadline = time.monotonic() + graceful
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.3)
+
+        _sig(signal.SIGKILL)
+        deadline = time.monotonic() + force
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.3)
 
     def _sync_state(self) -> None:
         """Reflect process exit into status (caller holds lock)."""
@@ -524,5 +755,5 @@ __all__ = [
     "LogCallback",
     "LlamaServerController",
     "build_argv",
-    "is_port_available",
+    "generate_models_preset",
 ]

@@ -36,10 +36,11 @@ class HfTokenSource:
 class AppConfig:
     llama_server_path: Optional[str] = None
     models_dir: Optional[str] = None
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8080
     hf_token_source: HfTokenSource = field(default_factory=HfTokenSource)
     global_settings: SettingValueMap = field(default_factory=SettingValueMap)
+    router_mode: bool = False
     selected_model_id: Optional[str] = None
     selected_profile_id: Optional[str] = None
 
@@ -50,9 +51,8 @@ class AppConfig:
             "host": self.host,
             "port": self.port,
             "hf_token_source": self.hf_token_source.to_json(),
-            "global_settings": self.global_settings.to_json(),
+            "router_mode": self.router_mode,
             "selected_model_id": self.selected_model_id,
-            "selected_profile_id": self.selected_profile_id,
         }
 
     @classmethod
@@ -62,10 +62,11 @@ class AppConfig:
         return cls(
             llama_server_path=data.get("llama_server_path") if isinstance(data.get("llama_server_path"), str) else None,
             models_dir=data.get("models_dir") if isinstance(data.get("models_dir"), str) else None,
-            host=str(data.get("host") or "127.0.0.1"),
+            host=str(data.get("host") or "0.0.0.0"),
             port=int(data.get("port") or 8080),
             hf_token_source=HfTokenSource.from_json(data.get("hf_token_source")),
             global_settings=SettingValueMap.from_json(data.get("global_settings") or {}, LLAMA_OPTION_CATALOG),
+            router_mode=bool(data.get("router_mode", False)),
             selected_model_id=data.get("selected_model_id") if isinstance(data.get("selected_model_id"), str) else None,
             selected_profile_id=data.get("selected_profile_id") if isinstance(data.get("selected_profile_id"), str) else None,
         )

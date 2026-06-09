@@ -12,7 +12,10 @@ metadata) would improve accuracy but is out of scope here.
 
 from __future__ import annotations
 import logging
+import os
 import re
+import subprocess
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional

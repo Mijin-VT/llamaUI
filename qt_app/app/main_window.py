@@ -15,14 +15,12 @@ from PySide6.QtWidgets import (
 
 from llama_data import ConfigStore, LibraryStore, ProfileStore
 
-from .pages.base import PagePolicy
 from .pages.diagnostics import DiagnosticsPage
 from .pages.discover import DiscoverPage
 from .pages.library import LibraryPage
 from .pages.run import RunPage
 from .pages.settings import SettingsPage
 from . import theme
-from .widgets.inspector import Inspector
 from .widgets.sidebar import NavItemId, Sidebar
 
 
@@ -32,8 +30,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("llamaUI")
-        self.resize(1360, 860)
-        self.setMinimumSize(1100, 720)
+        self.resize(1240, 860)
+        self.setMinimumSize(960, 680)
 
         root = QWidget(self)
         root.setObjectName("AppRoot")
@@ -67,29 +65,24 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(center)
         center_layout.addWidget(self.stack, 1)
 
-        self.inspector = Inspector(root)
-
         # --- QSplitter layout -------------------------------------------------
         self._splitter = QSplitter(Qt.Orientation.Horizontal, root)
         self._splitter.setContentsMargins(0, 0, 0, 0)
         self._splitter.setHandleWidth(1)
         self._splitter.addWidget(self.sidebar)
         self._splitter.addWidget(center)
-        self._splitter.addWidget(self.inspector)
         root_layout.addWidget(self._splitter, 1)
 
-        # Default sizes: sidebar | center | inspector
+        # Default sizes: sidebar | center. Runtime health lives at the bottom
+        # of the sidebar, so the center column gets the remaining width.
         self._default_sizes = [
             theme.SIDEBAR_DEFAULT_WIDTH,
-            760,
-            theme.INSPECTOR_DEFAULT_WIDTH,
+            980,
         ]
         self._splitter.setSizes(self._default_sizes)
 
-        # Stretch factors: sidebar=0, center=1 (stretches), inspector=0
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setStretchFactor(2, 0)
 
         # Persist splitter sizes via QSettings
         self._settings = QSettings(theme.SPLITTER_KEY, QSettings.Format.IniFormat)
@@ -133,40 +126,20 @@ class MainWindow(QMainWindow):
         if saved is not None:
             try:
                 sizes = [int(s) for s in saved]
-                if len(sizes) == 3:
+                if len(sizes) == 2:
                     self._splitter.setSizes(sizes)
             except (ValueError, TypeError):
                 pass
 
-    # -- inspector visibility --------------------------------------------------
+    # -- inspector compatibility ----------------------------------------------
 
     def set_inspector_visible(self, visible: bool) -> None:
-        """Toggle the inspector panel and adjust splitter sizes accordingly."""
-        if visible:
-            self.inspector.show()
-            sizes = self._splitter.sizes()
-            # If inspector is zero-width, restore it to default
-            if sizes[2] < theme.INSPECTOR_MIN_WIDTH:
-                sizes[2] = theme.INSPECTOR_DEFAULT_WIDTH
-                self._splitter.setSizes(sizes)
-        else:
-            self.inspector.hide()
-            sizes = self._splitter.sizes()
-            sizes[2] = 0
-            self._splitter.setSizes(sizes)
+        """Compatibility no-op: runtime status now lives in the left sidebar."""
+        return
 
     def _set_inspector_collapsed(self, collapsed: bool) -> None:
-        """Collapse/expand the inspector content while keeping it in the splitter."""
-        if collapsed:
-            sizes = self._splitter.sizes()
-            sizes[2] = 0
-            self._splitter.setSizes(sizes)
-            self.inspector._do_collapse()
-        else:
-            sizes = self._splitter.sizes()
-            sizes[2] = theme.INSPECTOR_DEFAULT_WIDTH
-            self._splitter.setSizes(sizes)
-            self.inspector._on_expand()
+        """Compatibility no-op: runtime status now lives in the left sidebar."""
+        return
 
     # -- navigation ------------------------------------------------------------
 
@@ -178,16 +151,6 @@ class MainWindow(QMainWindow):
         self.title.setText(title)
         self.subtitle.setText(page.property("subtitle") or "")
 
-        # PagePolicy drives inspector visibility
-        policy = getattr(page, "policy", PagePolicy.STANDARD)
-        if policy == PagePolicy.FULL_WIDTH:
-            self.set_inspector_visible(False)
-        elif policy == PagePolicy.INSPECTOR_OPTIONAL:
-            self.set_inspector_visible(True)
-            self._set_inspector_collapsed(True)
-        else:
-            self.set_inspector_visible(True)
-            self._set_inspector_collapsed(False)
 
         if item_id in {NavItemId.RUN, NavItemId.LIBRARY} and hasattr(page, "_refresh"):
             page._refresh()
@@ -201,8 +164,8 @@ class MainWindow(QMainWindow):
             page._reload_models()
 
     def _on_inspector_changed(self, payload: dict) -> None:
-        self.inspector.update_details(
-            payload.get("title", "Inspector"),
+        self.sidebar.update_details(
+            payload.get("title", "Run"),
             payload.get("chip_text", "—"),
             payload.get("chip_style", "muted"),
             payload.get("line1", ""),

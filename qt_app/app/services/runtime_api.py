@@ -267,5 +267,63 @@ class LlamaServerApiClient:
             message=f"Model switch failed: {error_detail}",
         )
 
+    # -- router mode model management ----------------------------------------
+
+    def list_loaded_models(self) -> list[dict]:
+        """GET /models — return list of model dicts from router mode.
+
+        Each dict has at least 'id' (str) and may have 'state' ('loaded'|'loading'|'unloaded').
+        Returns empty list on any error.
+        """
+        body, err = _get_json(f"{self.base_url}/models", timeout=self.timeout)
+        if err is not None or not isinstance(body, dict):
+            return []
+        data = body.get("data")
+        if not isinstance(data, list):
+            return []
+        return [m for m in data if isinstance(m, dict)]
+
+    def unload_model(self, model_name: str) -> tuple[bool, str]:
+        """POST /models/unload — unload a model to free VRAM.
+
+        Returns (success, message).
+        """
+        body, code, err = _post_json(
+            f"{self.base_url}/models/unload",
+            {"model": model_name},
+            timeout=max(self.timeout, 10.0),
+        )
+        if code is not None and 200 <= code < 300:
+            return True, f"Unloaded {model_name}"
+        msg = err or f"HTTP {code}"
+        if isinstance(body, dict):
+            inner = body.get("error")
+            if isinstance(inner, dict):
+                msg = inner.get("message", msg)
+            elif isinstance(inner, str):
+                msg = inner
+        return False, msg
+
+    def load_model(self, model_name: str) -> tuple[bool, str]:
+        """POST /models/load — load a model on demand.
+
+        Returns (success, message).
+        """
+        body, code, err = _post_json(
+            f"{self.base_url}/models/load",
+            {"model": model_name},
+            timeout=max(self.timeout, 30.0),
+        )
+        if code is not None and 200 <= code < 300:
+            return True, f"Loaded {model_name}"
+        msg = err or f"HTTP {code}"
+        if isinstance(body, dict):
+            inner = body.get("error")
+            if isinstance(inner, dict):
+                msg = inner.get("message", msg)
+            elif isinstance(inner, str):
+                msg = inner
+        return False, msg
+
 
 __all__ = ["ApiStatus", "HealthStatus", "LlamaServerApiClient", "SwitchResult"]
