@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Code,
+  Group,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import { IconRefresh, IconX } from "@tabler/icons-react";
 import { frameworkDiagnostics } from "../shared/tauriApi";
 import type { FrameworkDiagnostics } from "../shared/types";
 
@@ -55,33 +67,58 @@ export default function DiagnosticsPage() {
     : [];
 
   return (
-    <div className="page">
-      <div className="flex-row" style={{ justifyContent: "space-between" }}>
-        <h2>Diagnostics</h2>
-        <button className="secondary" disabled={loading} onClick={load}>
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+    <Stack gap="md">
+      <Group justify="space-between" align="center">
+        <Title order={2}>Diagnostics</Title>
+        <Button
+          loading={loading}
+          variant="light"
+          leftSection={<IconRefresh size={16} />}
+          onClick={load}
+        >
+          Refresh
+        </Button>
+      </Group>
 
-      <section className="card">
-        <header className="card-header">
-          <h3>Framework viability</h3>
-        </header>
-        <div className="card-body">
-          <p className="hint">
-            Phase 1 gate: prove native KDE Wayland + NVIDIA operation before committing to Tauri.
-          </p>
-          {error && <div className="callout callout-error">{error}</div>}
-          <dl className="hw-grid">
-            {rows.map(([label, value]) => (
-              <div key={label} style={{ display: "contents" }}>
-                <dt>{label}</dt>
-                <dd className="mono">{valueText(value)}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
-    </div>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h3">
+            Framework viability
+          </Title>
+        </Card.Section>
+
+        <Stack gap="sm" mt="sm">
+          <Text c="dimmed" size="sm">
+            Phase 1 gate: prove native KDE Wayland + NVIDIA operation before
+            committing to Tauri.
+          </Text>
+
+          {error && (
+            <Alert color="red" variant="light" icon={<IconX size={16} />}>
+              {error}
+            </Alert>
+          )}
+
+          <Table highlightOnHover withTableBorder>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Property</Table.Th>
+                <Table.Th>Value</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map(([label, value]) => (
+                <Table.Tr key={label}>
+                  <Table.Td>{label}</Table.Td>
+                  <Table.Td>
+                    <Code>{valueText(value)}</Code>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Stack>
+      </Card>
+    </Stack>
   );
 }

@@ -11,14 +11,11 @@ from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 class _VariantButton(QPushButton):
     _VARIANT: str = ""
-
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self.setMaximumWidth(220)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         if self._VARIANT:
             self.setProperty("variant", self._VARIANT)
-
 class SecondaryButton(_VariantButton):
     _VARIANT = "secondary"
 

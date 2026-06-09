@@ -31,6 +31,7 @@ from ..services.hugging_face import compute_hardware_fit
 from ..services.library_scan import infer_quant, open_hf, read_card_cache, reveal_file, scan_models_dir
 from ..widgets.buttons import DangerButton, SecondaryButton, SuccessButton
 from ..widgets.cards import Card, CardTitle, ElidedLabel, FieldTile
+from ..widgets.flow import FlowLayout
 from .base import PageBase
 
 
@@ -185,10 +186,7 @@ class LibraryPage(PageBase):
         layout.addWidget(self._detail_meta)
 
         self._tags_container = QWidget(card)
-        self._tags_row = QHBoxLayout(self._tags_container)
-        self._tags_row.setContentsMargins(0, 0, 0, 0)
-        self._tags_row.setSpacing(6)
-        self._tags_row.addStretch(1)
+        self._tags_row = FlowLayout(self._tags_container, hspacing=6, vspacing=6)
         layout.addWidget(self._tags_container)
 
         # Action buttons
@@ -248,13 +246,13 @@ class LibraryPage(PageBase):
 
         self.model_picker = QComboBox(card)
         self.model_picker.setObjectName("ModelPicker")
+        self.model_picker.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.model_picker.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.model_picker.setMinimumContentsLength(24)
         self.model_picker.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.model_picker.currentIndexChanged.connect(self._on_picker_changed)
         layout.addWidget(self.model_picker)
 
-        self.model_picker.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._layout.addWidget(card)
 
     # -- detail panel ----------------------------------------------------

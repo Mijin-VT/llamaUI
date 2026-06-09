@@ -1,4 +1,29 @@
 import { useState, useEffect, useCallback } from "react";
+import {
+  Card,
+  Stack,
+  Group,
+  Text,
+  Button,
+  TextInput,
+  NumberInput,
+  PasswordInput,
+  Badge,
+  Alert,
+  Table,
+  Title,
+  Grid,
+  Code,
+} from "@mantine/core";
+import {
+  IconFileSearch,
+  IconFolder,
+  IconCheck,
+  IconX,
+  IconDeviceFloppy,
+  IconCpu,
+  IconTrash,
+} from "@tabler/icons-react";
 import type { AppConfig, HardwareInfo } from "../shared/types";
 import {
   pickLlamaServerExecutable,
@@ -16,7 +41,10 @@ import {
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
   const val = bytes / Math.pow(1024, i);
   return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
@@ -28,10 +56,12 @@ function tokenSourceLabel(source: AppConfig["hf_token_source"]): string {
   return "No token";
 }
 
-function tokenSourceBadgeClass(source: AppConfig["hf_token_source"]): string {
-  if (source === "env_var") return "badge badge-success";
-  if (typeof source === "object" && "saved" in source) return "badge badge-info";
-  return "badge badge-muted";
+function tokenSourceBadgeColor(
+  source: AppConfig["hf_token_source"],
+): string {
+  if (source === "env_var") return "green";
+  if (typeof source === "object" && "saved" in source) return "blue";
+  return "gray";
 }
 
 // ---------------------------------------------------------------------------
@@ -43,9 +73,14 @@ interface SetupPageProps {
   onConfigUpdate: (c: AppConfig) => void;
 }
 
-export default function SetupPage({ config, onConfigUpdate }: SetupPageProps) {
+export default function SetupPage({
+  config,
+  onConfigUpdate,
+}: SetupPageProps) {
   // Local form state — synced from config prop
-  const [serverPath, setServerPath] = useState(config?.llama_server_path ?? "");
+  const [serverPath, setServerPath] = useState(
+    config?.llama_server_path ?? "",
+  );
   const [modelsDir, setModelsDir] = useState(config?.models_dir ?? "");
   const [host, setHost] = useState(config?.host ?? "127.0.0.1");
   const [port, setPort] = useState(config?.port ?? 8080);
@@ -101,7 +136,9 @@ export default function SetupPage({ config, onConfigUpdate }: SetupPageProps) {
   }, []);
 
   const buildConfig = useCallback(
-    (nextTokenSource: AppConfig["hf_token_source"] = tokenSource): AppConfig => ({
+    (
+      nextTokenSource: AppConfig["hf_token_source"] = tokenSource,
+    ): AppConfig => ({
       llama_server_path: serverPath || undefined,
       models_dir: modelsDir || undefined,
       host,
@@ -155,7 +192,9 @@ export default function SetupPage({ config, onConfigUpdate }: SetupPageProps) {
     const savedToken = tokenInput.trim();
     if (!savedToken) return;
 
-    const nextTokenSource: AppConfig["hf_token_source"] = { saved: savedToken };
+    const nextTokenSource: AppConfig["hf_token_source"] = {
+      saved: savedToken,
+    };
     setSaveError(null);
     setLoading("save-token");
     try {
@@ -232,281 +271,323 @@ export default function SetupPage({ config, onConfigUpdate }: SetupPageProps) {
   }, []);
 
   return (
-    <div className="page">
-      <h2>Setup</h2>
+    <Stack gap="lg">
+      <Title order={2}>Setup</Title>
 
       {/* ---- Executable ---- */}
-      <section className="card">
-        <header className="card-header">
-          <h3>llama-server Executable</h3>
-        </header>
-        <div className="card-body">
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Path</label>
-              <input
-                type="text"
-                value={serverPath}
-                onChange={(e) => setServerPath(e.target.value)}
-                placeholder="Path to llama-server binary"
-              />
-            </div>
-            <div className="form-group">
-              <button
-                className="secondary"
-                disabled={loading === "browse-server"}
-                onClick={handleBrowseServer}
-              >
-                {loading === "browse-server" ? "…" : "Browse"}
-              </button>
-            </div>
-          </div>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h4">
+            llama-server Executable
+          </Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          <Group align="flex-end" gap="sm" grow>
+            <TextInput
+              label="Path"
+              value={serverPath}
+              onChange={(e) => setServerPath(e.target.value)}
+              placeholder="Path to llama-server binary"
+            />
+            <Button
+              variant="default"
+              loading={loading === "browse-server"}
+              onClick={handleBrowseServer}
+              leftSection={<IconFileSearch size={16} />}
+            >
+              Browse
+            </Button>
+          </Group>
           {!serverPath && (
-            <p className="hint">
-              Select the llama-server binary. This is required to launch models.
-            </p>
+            <Text size="sm" c="dimmed">
+              Select the llama-server binary. This is required to launch
+              models.
+            </Text>
           )}
-        </div>
-      </section>
+        </Stack>
+      </Card>
 
       {/* ---- Models directory ---- */}
-      <section className="card">
-        <header className="card-header">
-          <h3>Model Download Directory</h3>
-        </header>
-        <div className="card-body">
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Directory</label>
-              <input
-                type="text"
-                value={modelsDir}
-                onChange={(e) => setModelsDir(e.target.value)}
-                placeholder="Directory for downloaded GGUF files"
-              />
-            </div>
-            <div className="form-group">
-              <button
-                className="secondary"
-                disabled={loading === "browse-dir"}
-                onClick={handleBrowseModelsDir}
-              >
-                {loading === "browse-dir" ? "…" : "Browse"}
-              </button>
-            </div>
-          </div>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h4">
+            Model Download Directory
+          </Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          <Group align="flex-end" gap="sm" grow>
+            <TextInput
+              label="Directory"
+              value={modelsDir}
+              onChange={(e) => setModelsDir(e.target.value)}
+              placeholder="Directory for downloaded GGUF files"
+            />
+            <Button
+              variant="default"
+              loading={loading === "browse-dir"}
+              onClick={handleBrowseModelsDir}
+              leftSection={<IconFolder size={16} />}
+            >
+              Browse
+            </Button>
+          </Group>
           {!modelsDir && (
-            <p className="hint">
+            <Text size="sm" c="dimmed">
               Choose a folder where downloaded models will be stored.
-            </p>
+            </Text>
           )}
-        </div>
-      </section>
+        </Stack>
+      </Card>
 
       {/* ---- HF Token ---- */}
-      <section className="card">
-        <header className="card-header">
-          <h3>Hugging Face Token</h3>
-        </header>
-        <div className="card-body">
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Token source</label>
-              <span className={tokenSourceBadgeClass(tokenSource)}>
-                {tokenSourceLabel(tokenSource)}
-              </span>
-            </div>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h4">
+            Hugging Face Token
+          </Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          <Group align="center" gap="sm">
+            <Text size="sm" fw={500}>
+              Token source
+            </Text>
+            <Badge
+              color={tokenSourceBadgeColor(tokenSource)}
+              variant="light"
+            >
+              {tokenSourceLabel(tokenSource)}
+            </Badge>
             {tokenSource !== "none" && (
-              <div className="form-group">
-                <button className="secondary btn-sm" disabled={loading === "clear-token"} onClick={handleClearToken}>
-                  Clear
-                </button>
-              </div>
+              <Button
+                variant="default"
+                size="xs"
+                loading={loading === "clear-token"}
+                onClick={handleClearToken}
+                leftSection={<IconTrash size={14} />}
+              >
+                Clear
+              </Button>
             )}
-          </div>
+          </Group>
 
-          <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>New token</label>
-              <input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="hf_xxxxxxxx (optional)"
-              />
-            </div>
-            <div className="form-group">
-              <button
-                className="primary btn-sm"
-                disabled={!tokenInput.trim() || loading === "save-token"}
-                onClick={handleSaveToken}
-              >
-                {loading === "save-token" ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
+          <Group align="flex-end" gap="sm" grow>
+            <PasswordInput
+              label="New token"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder="hf_xxxxxxxx (optional)"
+            />
+            <Button
+              loading={loading === "save-token"}
+              disabled={!tokenInput.trim()}
+              onClick={handleSaveToken}
+              leftSection={<IconDeviceFloppy size={16} />}
+            >
+              Save
+            </Button>
+          </Group>
 
-          <div className="form-row">
-            <div className="form-group">
-              <button
-                className="secondary btn-sm"
-                disabled={loading === "validate-token"}
-                onClick={handleValidateToken}
-              >
-                {loading === "validate-token" ? "Validating…" : "Validate Token"}
-              </button>
-            </div>
+          <Group align="center" gap="sm">
+            <Button
+              variant="default"
+              size="xs"
+              loading={loading === "validate-token"}
+              onClick={handleValidateToken}
+              leftSection={<IconCheck size={14} />}
+            >
+              Validate Token
+            </Button>
             {whoamiResult && (
-              <span className="text-success">
-                Authenticated as <strong>{whoamiResult}</strong>
-              </span>
+              <Text size="sm" c="green">
+                Authenticated as <Text span fw={700}>{whoamiResult}</Text>
+              </Text>
             )}
-            {whoamiError && <span className="text-error">{whoamiError}</span>}
-          </div>
+            {whoamiError && (
+              <Text size="sm" c="red">
+                {whoamiError}
+              </Text>
+            )}
+          </Group>
 
-          <p className="hint">
+          <Text size="sm" c="dimmed">
             A token is optional but needed for gated models or higher rate
-            limits. If the <code>HF_TOKEN</code> environment variable is set, it
-            will be detected automatically.
-          </p>
-        </div>
-      </section>
+            limits. If the <Code>HF_TOKEN</Code> environment variable is set,
+            it will be detected automatically.
+          </Text>
+        </Stack>
+      </Card>
 
       {/* ---- Connection ---- */}
-      <section className="card">
-        <header className="card-header">
-          <h3>Connection Settings</h3>
-        </header>
-        <div className="card-body">
-          <div className="form-row">
-            <div className="form-group">
-              <label>Host</label>
-              <input
-                type="text"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label>Port</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={port}
-                onChange={(e) => handlePortChange(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-      </section>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h4">
+            Connection Settings
+          </Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          <Group align="flex-start" gap="sm" grow>
+            <TextInput
+              label="Host"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+            />
+            <NumberInput
+              label="Port"
+              min={1}
+              max={65535}
+              value={port}
+              onChange={(val) => handlePortChange(String(val))}
+            />
+          </Group>
+        </Stack>
+      </Card>
 
       {/* ---- Hardware ---- */}
-      <section className="card">
-        <header className="card-header">
-          <h3>Hardware</h3>
-        </header>
-        <div className="card-body">
-          <button
-            className="secondary"
-            disabled={loading === "scan-hardware"}
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h4">
+            Hardware
+          </Title>
+        </Card.Section>
+        <Stack gap="md" mt="sm">
+          <Button
+            variant="default"
+            loading={loading === "scan-hardware"}
             onClick={handleScanHardware}
+            leftSection={<IconCpu size={16} />}
           >
-            {loading === "scan-hardware" ? "Scanning…" : "Scan Hardware"}
-          </button>
+            Scan Hardware
+          </Button>
 
           {hardware && (
             <>
-              <dl className="hw-grid">
-                <dt>CPU</dt>
-                <dd className="mono">{hardware.cpu_model}</dd>
-                <dt>Cores / Threads</dt>
-                <dd>
-                  {hardware.cpu_cores} cores, {hardware.cpu_threads} threads
-                </dd>
-                <dt>RAM</dt>
-                <dd>
-                  {formatBytes(hardware.ram_total_bytes)} total,{" "}
-                  {formatBytes(hardware.ram_available_bytes)} available
-                </dd>
-              </dl>
+              <Grid gutter="xs">
+                <Grid.Col span={4}>
+                  <Text size="sm" c="dimmed">
+                    CPU
+                  </Text>
+                </Grid.Col>
+                <Grid.Col span={8}>
+                  <Text size="sm" ff="monospace">
+                    {hardware.cpu_model}
+                  </Text>
+                </Grid.Col>
+
+                <Grid.Col span={4}>
+                  <Text size="sm" c="dimmed">
+                    Cores / Threads
+                  </Text>
+                </Grid.Col>
+                <Grid.Col span={8}>
+                  <Text size="sm">
+                    {hardware.cpu_cores} cores, {hardware.cpu_threads} threads
+                  </Text>
+                </Grid.Col>
+
+                <Grid.Col span={4}>
+                  <Text size="sm" c="dimmed">
+                    RAM
+                  </Text>
+                </Grid.Col>
+                <Grid.Col span={8}>
+                  <Text size="sm">
+                    {formatBytes(hardware.ram_total_bytes)} total,{" "}
+                    {formatBytes(hardware.ram_available_bytes)} available
+                  </Text>
+                </Grid.Col>
+              </Grid>
 
               {hardware.gpus.length > 0 && (
-                <div>
-                  <strong>GPUs</strong>
-                  <table className="file-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>VRAM Total</th>
-                        <th>VRAM Free</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <Stack gap="xs">
+                  <Text fw={500} size="sm">
+                    GPUs
+                  </Text>
+                  <Table highlightOnHover withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>VRAM Total</Table.Th>
+                        <Table.Th>VRAM Free</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
                       {hardware.gpus.map((gpu, i) => (
-                        <tr key={i}>
-                          <td>{gpu.name}</td>
-                          <td>{formatBytes(gpu.vram_total_bytes)}</td>
-                          <td>{formatBytes(gpu.vram_free_bytes)}</td>
-                        </tr>
+                        <Table.Tr key={i}>
+                          <Table.Td>{gpu.name}</Table.Td>
+                          <Table.Td>
+                            {formatBytes(gpu.vram_total_bytes)}
+                          </Table.Td>
+                          <Table.Td>
+                            {formatBytes(gpu.vram_free_bytes)}
+                          </Table.Td>
+                        </Table.Tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </Table.Tbody>
+                  </Table>
+                </Stack>
               )}
 
               {hardware.llama_devices.length > 0 && (
-                <div>
-                  <strong>llama.cpp Devices</strong>
-                  <table className="file-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Name</th>
-                        <th>VRAM Total</th>
-                        <th>VRAM Free</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <Stack gap="xs">
+                  <Text fw={500} size="sm">
+                    llama.cpp Devices
+                  </Text>
+                  <Table highlightOnHover withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>#</Table.Th>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>VRAM Total</Table.Th>
+                        <Table.Th>VRAM Free</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
                       {hardware.llama_devices.map((dev) => (
-                        <tr key={dev.index}>
-                          <td>{dev.index}</td>
-                          <td>{dev.name}</td>
-                          <td>
+                        <Table.Tr key={dev.index}>
+                          <Table.Td>{dev.index}</Table.Td>
+                          <Table.Td>{dev.name}</Table.Td>
+                          <Table.Td>
                             {dev.vram_total_bytes != null
                               ? formatBytes(dev.vram_total_bytes)
                               : "—"}
-                          </td>
-                          <td>
+                          </Table.Td>
+                          <Table.Td>
                             {dev.vram_free_bytes != null
                               ? formatBytes(dev.vram_free_bytes)
                               : "—"}
-                          </td>
-                        </tr>
+                          </Table.Td>
+                        </Table.Tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </Table.Tbody>
+                  </Table>
+                </Stack>
               )}
             </>
           )}
-        </div>
-      </section>
+        </Stack>
+      </Card>
 
       {/* ---- Save ---- */}
-      {saveError && <div className="callout callout-error">{saveError}</div>}
-      <div className="flex-row" style={{ justifyContent: "flex-end" }}>
-        {saveSuccess && (
-          <span className="text-success">Configuration saved.</span>
-        )}
-        <button
-          className="primary btn-lg"
-          disabled={loading === "save"}
+      {saveError && (
+        <Alert color="red" variant="light" icon={<IconX size={16} />}>
+          {saveError}
+        </Alert>
+      )}
+      {saveSuccess && (
+        <Alert color="green" variant="light" icon={<IconCheck size={16} />}>
+          Configuration saved.
+        </Alert>
+      )}
+      <Group justify="flex-end">
+        <Button
+          size="lg"
+          loading={loading === "save"}
           onClick={handleSave}
+          leftSection={<IconDeviceFloppy size={16} />}
         >
-          {loading === "save" ? "Saving…" : "Save Configuration"}
-        </button>
-      </div>
-    </div>
+          Save Configuration
+        </Button>
+      </Group>
+    </Stack>
   );
 }

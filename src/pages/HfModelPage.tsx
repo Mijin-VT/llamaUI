@@ -1,6 +1,28 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  Accordion,
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Card,
+  Group,
+  List,
+  Progress,
+  ScrollArea,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import {
+  IconCheck,
+  IconDownload,
+  IconSettings,
+  IconX,
+} from "@tabler/icons-react";
 import type { AppConfig, ModelCardResponse, HfSibling, GgufFileInfo, SettingHint } from "../shared/types";
 import {
   hfModelCard,
@@ -30,8 +52,8 @@ function basename(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx >= 0 ? path.slice(idx + 1) : path;
 }
-export default function HfModelPage({ repoId, config, onApplyHints, onGoToRun }: HfModelPageProps) {
 
+export default function HfModelPage({ repoId, config, onApplyHints, onGoToRun }: HfModelPageProps) {
   const [card, setCard] = useState<ModelCardResponse | null>(null);
   const [siblings, setSiblings] = useState<HfSibling[]>([]);
   const [loading, setLoading] = useState(false);
@@ -171,6 +193,7 @@ export default function HfModelPage({ repoId, config, onApplyHints, onGoToRun }:
       // Best-effort cancel
     }
   }, [repoId]);
+
   // ── Apply settings: hand hints to App via callback, then go to Run ────
   const handleApplySettings = useCallback(() => {
     if (!card?.suggested_settings?.length) return;
@@ -183,30 +206,32 @@ export default function HfModelPage({ repoId, config, onApplyHints, onGoToRun }:
   // ── Empty state ───────────────────────────────────────────────────────
   if (!repoId) {
     return (
-      <div className="page">
-        <h2>Hugging Face Model Detail</h2>
-        <p className="hint">Select a model from the Download page to view its details.</p>
-      </div>
+      <Stack gap="md">
+        <Title order={2}>Hugging Face Model Detail</Title>
+        <Text c="dimmed">Select a model from the Download page to view its details.</Text>
+      </Stack>
     );
   }
 
   // ── Loading state ─────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="page">
-        <h2>{repoId}</h2>
-        <p>Loading model details…</p>
-      </div>
+      <Stack gap="md">
+        <Title order={2}>{repoId}</Title>
+        <Text>Loading model details…</Text>
+      </Stack>
     );
   }
 
   // ── Error state ───────────────────────────────────────────────────────
   if (error && !card) {
     return (
-      <div className="page">
-        <h2>{repoId}</h2>
-        <div className="error-banner">Failed to load model details: {error}</div>
-      </div>
+      <Stack gap="md">
+        <Title order={2}>{repoId}</Title>
+        <Alert color="red" variant="light" icon={<IconX size={16} />}>
+          Failed to load model details: {error}
+        </Alert>
+      </Stack>
     );
   }
 
@@ -215,188 +240,233 @@ export default function HfModelPage({ repoId, config, onApplyHints, onGoToRun }:
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
-    <div className="page hf-model-page">
-      <h2>{repoId}</h2>
+    <Stack gap="md">
+      <Title order={2}>{repoId}</Title>
 
       {/* ── Metadata panel ─────────────────────────────────────────────── */}
-      <section className="hf-meta-panel">
-        <h3>Model Information</h3>
-        <dl className="meta-grid">
-          {cardData?.pipeline_tag && (
-            <>
-              <dt>Pipeline</dt>
-              <dd>{cardData.pipeline_tag}</dd>
-            </>
-          )}
-          {cardData?.base_model && (
-            <>
-              <dt>Base Model</dt>
-              <dd>{cardData.base_model}</dd>
-            </>
-          )}
-          {cardData?.license && (
-            <>
-              <dt>License</dt>
-              <dd>{cardData.license}</dd>
-            </>
-          )}
-          {cardData?.model_type && (
-            <>
-              <dt>Model Type</dt>
-              <dd>{cardData.model_type}</dd>
-            </>
-          )}
-          {cardData?.library_name && (
-            <>
-              <dt>Library</dt>
-              <dd>{cardData.library_name}</dd>
-            </>
-          )}
-          {cardData?.language && cardData.language.length > 0 && (
-            <>
-              <dt>Languages</dt>
-              <dd>{cardData.language.join(", ")}</dd>
-            </>
-          )}
-          {(cardData?.tags?.length ?? 0) > 0 && (
-            <>
-              <dt>Tags</dt>
-              <dd className="tag-list">
-                {cardData!.tags!.map((t) => (
-                  <span key={t} className="tag-badge">{t}</span>
-                ))}
-              </dd>
-            </>
-          )}
-          {card?.repo_id && (
-            <>
-              <dt>Repository</dt>
-              <dd>
-                <a
-                  href={`https://huggingface.co/${card.repo_id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {card.repo_id}
-                </a>
-              </dd>
-            </>
-          )}
-        </dl>
-      </section>
+      <Card withBorder>
+        <Accordion defaultValue="info">
+          <Accordion.Item value="info">
+            <Accordion.Control>
+              <Title order={3} size="h5">Model Information</Title>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <List size="sm" withPadding={false} listStyleType="none">
+                {cardData?.pipeline_tag && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Pipeline</Text>
+                      <Text size="sm">{cardData.pipeline_tag}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {cardData?.base_model && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Base Model</Text>
+                      <Text size="sm">{cardData.base_model}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {cardData?.license && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">License</Text>
+                      <Text size="sm">{cardData.license}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {cardData?.model_type && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Model Type</Text>
+                      <Text size="sm">{cardData.model_type}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {cardData?.library_name && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Library</Text>
+                      <Text size="sm">{cardData.library_name}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {cardData?.language && cardData.language.length > 0 && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Languages</Text>
+                      <Text size="sm">{cardData.language.join(", ")}</Text>
+                    </Group>
+                  </List.Item>
+                )}
+                {(cardData?.tags?.length ?? 0) > 0 && (
+                  <List.Item>
+                    <Group justify="space-between" align="flex-start">
+                      <Text fw={500} size="sm">Tags</Text>
+                      <Group gap="xs" wrap="wrap">
+                        {cardData!.tags!.map((t) => (
+                          <Badge key={t} variant="light" size="sm">
+                            {t}
+                          </Badge>
+                        ))}
+                      </Group>
+                    </Group>
+                  </List.Item>
+                )}
+                {card?.repo_id && (
+                  <List.Item>
+                    <Group justify="space-between">
+                      <Text fw={500} size="sm">Repository</Text>
+                      <Anchor
+                        href={`https://huggingface.co/${card.repo_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        size="sm"
+                      >
+                        {card.repo_id}
+                      </Anchor>
+                    </Group>
+                  </List.Item>
+                )}
+              </List>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      </Card>
 
       {/* ── GGUF files table ───────────────────────────────────────────── */}
-      <section className="hf-files-section">
-        <h3>GGUF Files</h3>
-        {regularGguf.length === 0 && mmprojFiles.length === 0 ? (
-          <p className="hint">No GGUF files found in this repository.</p>
-        ) : (
-          <table className="hf-files-table">
-            <thead>
-              <tr>
-                <th>File</th>
-                <th>Type</th>
-                <th>Size</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {regularGguf.map((s) => (
-                <FileRow
-                  key={s.rfilename}
-                  sibling={s}
-                  typeLabel="Model weights"
-                  dlState={downloads[s.rfilename]}
-                  isLocal={localFiles.has(basename(s.rfilename))}
-                  modelsDir={modelsDir}
-                  onDownload={handleDownload}
-                  onCancel={handleCancelDownload}
-                  formatBytes={formatBytes}
-                />
-              ))}
-              {mmprojFiles.map((s) => (
-                <FileRow
-                  key={s.rfilename}
-                  sibling={s}
-                  typeLabel="Multimodal projector"
-                  dlState={downloads[s.rfilename]}
-                  isLocal={localFiles.has(basename(s.rfilename))}
-                  modelsDir={modelsDir}
-                  onDownload={handleDownload}
-                  onCancel={handleCancelDownload}
-                  formatBytes={formatBytes}
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h5">GGUF Files</Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          {regularGguf.length === 0 && mmprojFiles.length === 0 ? (
+            <Text c="dimmed">No GGUF files found in this repository.</Text>
+          ) : (
+            <ScrollArea>
+              <Table highlightOnHover withTableBorder>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>File</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Size</Table.Th>
+                    <Table.Th>Action</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {regularGguf.map((s) => (
+                    <FileRow
+                      key={s.rfilename}
+                      sibling={s}
+                      typeLabel="Model weights"
+                      dlState={downloads[s.rfilename]}
+                      isLocal={localFiles.has(basename(s.rfilename))}
+                      modelsDir={modelsDir}
+                      onDownload={handleDownload}
+                      onCancel={handleCancelDownload}
+                      formatBytes={formatBytes}
+                    />
+                  ))}
+                  {mmprojFiles.map((s) => (
+                    <FileRow
+                      key={s.rfilename}
+                      sibling={s}
+                      typeLabel="Multimodal projector"
+                      dlState={downloads[s.rfilename]}
+                      isLocal={localFiles.has(basename(s.rfilename))}
+                      modelsDir={modelsDir}
+                      onDownload={handleDownload}
+                      onCancel={handleCancelDownload}
+                      formatBytes={formatBytes}
+                    />
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          )}
+        </Stack>
+      </Card>
 
       {/* ── Setting hints ──────────────────────────────────────────────── */}
       {hints.length > 0 && (
-        <section className="hf-hints-section">
-          <h3>Suggested Settings</h3>
-          <p className="hint">
-            These settings were detected from the model card and may improve
-            performance or are required for correct behaviour.
-          </p>
-          <table className="hf-hints-table">
-            <thead>
-              <tr>
-                <th>Setting</th>
-                <th>Value</th>
-                <th>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hints.map((h, i) => (
-                <tr key={`${h.key}-${i}`}>
-                  <td className="mono">{h.key}</td>
-                  <td className="mono">{h.value}</td>
-                  <td>
-                    <span className="source-badge">{h.source}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button
-            className="btn btn-primary"
-            disabled={applyingSettings}
-            onClick={handleApplySettings}
-          >
-            {applyingSettings ? "Applying…" : "Apply these settings"}
-          </button>
-        </section>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">Suggested Settings</Title>
+          </Card.Section>
+          <Stack gap="sm" mt="sm">
+            <Text c="dimmed" size="sm">
+              These settings were detected from the model card and may improve
+              performance or are required for correct behaviour.
+            </Text>
+            <Table highlightOnHover withTableBorder>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Setting</Table.Th>
+                  <Table.Th>Value</Table.Th>
+                  <Table.Th>Source</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {hints.map((h, i) => (
+                  <Table.Tr key={`${h.key}-${i}`}>
+                    <Table.Td>
+                      <Text ff="monospace" size="sm">{h.key}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text ff="monospace" size="sm">{h.value}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" size="sm">{h.source}</Badge>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            <Button
+              leftSection={<IconSettings size={16} />}
+              loading={applyingSettings}
+              onClick={handleApplySettings}
+            >
+              Apply these settings
+            </Button>
+          </Stack>
+        </Card>
       )}
 
       {/* ── Model card README ──────────────────────────────────────────── */}
       {card?.readme && (
-        <section className="hf-readme-section">
-          <h3>Model Card</h3>
-          <div className="markdown-body">
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">Model Card</Title>
+          </Card.Section>
+          <ScrollArea h={400} mt="sm">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {card.readme}
             </ReactMarkdown>
-          </div>
-        </section>
+          </ScrollArea>
+        </Card>
       )}
 
       {/* ── No readme fallback ─────────────────────────────────────────── */}
       {!card?.readme && !error && (
-        <section className="hf-readme-section">
-          <h3>Model Card</h3>
-          <p className="hint">No README/model card available for this repository.</p>
-        </section>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">Model Card</Title>
+          </Card.Section>
+          <Text c="dimmed" mt="sm">
+            No README/model card available for this repository.
+          </Text>
+        </Card>
       )}
 
       {/* ── Non-blocking error banner ──────────────────────────────────── */}
       {error && card && (
-        <div className="error-banner">
+        <Alert color="red" variant="light" icon={<IconX size={16} />} mt="md">
           Some data could not be loaded: {error}
-        </div>
+        </Alert>
       )}
-    </div>
+    </Stack>
   );
 }
 
@@ -434,24 +504,27 @@ function FileRow({
       : 0;
 
   return (
-    <tr className={failed ? "row-error" : done ? "row-done" : ""}>
-      <td className="mono filename-cell" title={name}>
-        {name}
-      </td>
-      <td>
-        <span
-          className={`type-badge ${
-            typeLabel === "Multimodal projector" ? "type-mmproj" : "type-model"
-          }`}
+    <Table.Tr>
+      <Table.Td title={name}>
+        <Text ff="monospace" size="sm">{name}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Badge
+          color={typeLabel === "Multimodal projector" ? "violet" : "blue"}
+          variant="light"
+          size="sm"
         >
           {typeLabel}
-        </span>
-      </td>
-      <td>{formatBytes(sibling.size)}</td>
-      <td className="action-cell">
+        </Badge>
+      </Table.Td>
+      <Table.Td>
+        <Text size="sm">{formatBytes(sibling.size)}</Text>
+      </Table.Td>
+      <Table.Td>
         {!done && !active && !failed && (
-          <button
-            className="btn btn-sm"
+          <Button
+            size="xs"
+            leftSection={<IconDownload size={14} />}
             disabled={!modelsDir}
             title={
               modelsDir
@@ -461,34 +534,38 @@ function FileRow({
             onClick={() => onDownload(name)}
           >
             Download
-          </button>
+          </Button>
         )}
         {active && (
-          <div className="download-progress">
-            <div className="progress-bar-track">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-            <span className="progress-text">
-              {formatBytes(dlState!.bytesDownloaded)} / {formatBytes(dlState!.bytesTotal)}{" "}
-              ({progressPct}%)
-            </span>
-            <button className="btn btn-sm btn-danger" onClick={() => onCancel(name)}>
-              Cancel
-            </button>
-          </div>
+          <Group grow align="center" wrap="nowrap">
+            <Progress value={progressPct} size="sm" />
+            <Group gap="sm" align="center" wrap="nowrap">
+              <Text size="xs">
+                {formatBytes(dlState!.bytesDownloaded)} / {formatBytes(dlState!.bytesTotal)} ({progressPct}%)
+              </Text>
+              <Button size="xs" color="red" variant="light" onClick={() => onCancel(name)}>
+                Cancel
+              </Button>
+            </Group>
+          </Group>
         )}
         {done && !active && (
-          <span className="status-ok">Downloaded{isLocal && !dlState?.done ? " (local)" : ""}</span>
+          <Group gap={4} align="center">
+            <IconCheck size={16} color="var(--mantine-color-green-6)" />
+            <Text c="green" size="sm">
+              Downloaded{isLocal && !dlState?.done ? " (local)" : ""}
+            </Text>
+          </Group>
         )}
         {failed && (
-          <span className="status-err" title={dlState!.error}>
-            Failed
-          </span>
+          <Group gap={4} align="center">
+            <IconX size={16} color="var(--mantine-color-red-6)" />
+            <Text c="red" size="sm" title={dlState!.error}>
+              Failed
+            </Text>
+          </Group>
         )}
-      </td>
-    </tr>
+      </Table.Td>
+    </Table.Tr>
   );
 }

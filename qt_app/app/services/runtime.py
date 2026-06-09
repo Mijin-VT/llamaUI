@@ -239,23 +239,32 @@ def build_argv(
     models_max: int = 0,
 ) -> list[str]:
     """Build the full argv for llama-server from config, model, and profile.
-    Model path, host, and port from *config* always take precedence over
-    profile settings to avoid confusing mismatches.
-
-    When *models_preset_path* is provided (router mode), ``--models-preset``
-    is appended to the argv so each model inherits its per-profile settings.
+    Precedence: profile override > Settings default (config) > llama.cpp catalog default.
+    Only inject a flag when the effective value differs from the catalog default.
     """
     if not config.llama_server_path:
         raise ValueError("llama-server path is not configured")
-
+    argv = [config.llama_server_path]
+    # Determine effective host/port: profile > config > catalog
+    host_opt = LLAMA_OPTION_CATALOG.get("host")
+    port_opt = LLAMA_OPTION_CATALOG.get("port")
     host = config.host
     port = config.port
-    argv = [
-        config.llama_server_path,
-        "--host", host,
-        "--port", str(port),
-    ]
-
+    if profile is not None:
+        profile_host = profile.settings.get("host")
+        if profile_host is not None and profile_host.value is not None:
+            host = str(profile_host.value)
+        profile_port = profile.settings.get("port")
+        if profile_port is not None and profile_port.value is not None:
+            port = int(profile_port.value)
+    # Only inject host if it differs from catalog default
+    catalog_host = str(host_opt.default.value) if host_opt and host_opt.default else "127.0.0.1"
+    if host != catalog_host:
+        argv.extend(["--host", host])
+    # Only inject port if it differs from catalog default
+    catalog_port = int(port_opt.default.value) if port_opt and port_opt.default else 8080
+    if port != catalog_port:
+        argv.extend(["--port", str(port)])
     # Router mode: models are defined by the preset INI (no --models-dir).
     # Single-model mode: serve one specific .gguf file.
     if not config.router_mode:
@@ -263,14 +272,13 @@ def build_argv(
     # Per-model preset for router mode.
     if models_preset_path:
         argv.extend(["--models-preset", models_preset_path])
-
     # Router mode: max simultaneously loaded models.
     if models_max > 0:
         argv.extend(["--models-max", str(models_max)])
     argv.extend(config.global_settings.to_argv(LLAMA_OPTION_CATALOG))
-
     # Profile settings overlay — only include user-explicitly-set values
-    # that differ from catalog defaults (skip model/host/port duplicates).
+    # that differ from catalog defaults.  Keep host/port in skip_ids so
+    # they are not double-emitted.
     if profile is not None:
         skip_ids = {"model", "host", "port"}
         user_set = getattr(profile, "user_set", None) or set()

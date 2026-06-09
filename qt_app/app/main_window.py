@@ -41,12 +41,12 @@ class MainWindow(QMainWindow):
 
         self.sidebar = Sidebar(root)
         self.sidebar.navigated.connect(self.navigate)
+        self.sidebar.collapse_changed.connect(self._on_sidebar_collapsed)
 
         center = QFrame(root)
         center.setObjectName("CenterColumn")
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
         center_layout.setSpacing(0)
 
         header = QFrame(center)
@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         # --- QSplitter layout -------------------------------------------------
         self._splitter = QSplitter(Qt.Orientation.Horizontal, root)
         self._splitter.setContentsMargins(0, 0, 0, 0)
-        self._splitter.setHandleWidth(1)
+        self._splitter.setHandleWidth(theme.SPLITTER_HANDLE_WIDTH)
         self._splitter.addWidget(self.sidebar)
         self._splitter.addWidget(center)
         root_layout.addWidget(self._splitter, 1)
@@ -84,10 +84,11 @@ class MainWindow(QMainWindow):
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
 
-        # Persist splitter sizes via QSettings
+        # Persist splitter sizes & collapsed state via QSettings
         self._settings = QSettings(theme.SPLITTER_KEY, QSettings.Format.IniFormat)
         self._splitter.splitterMoved.connect(self._save_splitter_sizes)
         self._restore_splitter_sizes()
+        self._restore_sidebar_state()
 
         # Shared stores so all pages read/write the same persisted state.
         config_store = ConfigStore.default()
@@ -116,10 +117,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self.navigate(NavItemId.RUN)
 
-    # -- splitter persistence --------------------------------------------------
+    # -- splitter & sidebar persistence ----------------------------------------
 
     def _save_splitter_sizes(self) -> None:
-        self._settings.setValue("sizes", self._splitter.sizes())
+        if not self.sidebar.is_collapsed:
+            self._settings.setValue("sizes", self._splitter.sizes())
 
     def _restore_splitter_sizes(self) -> None:
         saved = self._settings.value("sizes")
@@ -130,6 +132,26 @@ class MainWindow(QMainWindow):
                     self._splitter.setSizes(sizes)
             except (ValueError, TypeError):
                 pass
+
+    def _restore_sidebar_state(self) -> None:
+        """Restore collapsed state from settings (called once at startup)."""
+        collapsed = self._settings.value("sidebar_collapsed", False)
+        if collapsed:
+            self.sidebar.set_collapsed(True)
+            self._splitter.setSizes([theme.SIDEBAR_COLLAPSED_WIDTH, self.width() - theme.SIDEBAR_COLLAPSED_WIDTH])
+
+    def _on_sidebar_collapsed(self, collapsed: bool) -> None:
+        """React to sidebar collapse/expand — resize splitter accordingly."""
+        self._settings.setValue("sidebar_collapsed", collapsed)
+        if collapsed:
+            # Save current expanded width before collapsing so we can restore it
+            self._expanded_sidebar_width = self._splitter.sizes()[0]
+            self._splitter.setSizes([theme.SIDEBAR_COLLAPSED_WIDTH, self._splitter.sizes()[1] + self._expanded_sidebar_width - theme.SIDEBAR_COLLAPSED_WIDTH])
+        else:
+            target = getattr(self, "_expanded_sidebar_width", theme.SIDEBAR_DEFAULT_WIDTH)
+            self._splitter.setSizes([target, self._splitter.sizes()[1] + theme.SIDEBAR_COLLAPSED_WIDTH - target])
+            # Re-save sizes now that we're expanded
+            self._save_splitter_sizes()
 
     # -- inspector compatibility ----------------------------------------------
 

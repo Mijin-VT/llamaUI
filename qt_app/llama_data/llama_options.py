@@ -226,7 +226,7 @@ def _build_default_catalog() -> LlamaOptionCatalog:
         _opt("models_max", "--models-max", OptionKind.INTEGER, "Performance", "Max loaded models", "Maximum number of models loaded simultaneously in router mode. LRU eviction unloads the least-recently-used model when the limit is hit.", min_value=1, max_value=32, step=1),
         _opt("mmap", "--mmap", OptionKind.BOOLEAN, "Performance", "Memory-map model", "Memory-map the model file instead of loading it into RAM.", default=LlamaOptionValue.from_raw(OptionKind.BOOLEAN, True)),
         _opt("mlock", "--mlock", OptionKind.BOOLEAN, "Performance", "Lock memory", "Lock the model into physical RAM.", default=LlamaOptionValue.from_raw(OptionKind.BOOLEAN, False)),
-        _opt("host", "--host", OptionKind.STRING, "Server / API", "Bind host", "IP address or hostname the server listens on.", default=LlamaOptionValue.from_raw(OptionKind.STRING, "0.0.0.0")),
+        _opt("host", "--host", OptionKind.STRING, "Server / API", "Bind host", "IP address or hostname the server listens on.", default=LlamaOptionValue.from_raw(OptionKind.STRING, "127.0.0.1")),
         _opt("port", "--port", OptionKind.INTEGER, "Server / API", "Bind port", "TCP port the server listens on.", default=LlamaOptionValue.from_raw(OptionKind.INTEGER, 8080), min_value=1, max_value=65535, step=1),
         _opt("api_key", "--api-key", OptionKind.STRING, "Server / API", "API key", "Require this key in the Authorization header."),
         _opt("cont_batching", "--cont-batching", OptionKind.BOOLEAN, "Server / API", "Continuous batching", "Keep batching requests as tokens continue to arrive.", default=LlamaOptionValue.from_raw(OptionKind.BOOLEAN, True), restart_required=False),

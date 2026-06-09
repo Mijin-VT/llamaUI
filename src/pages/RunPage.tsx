@@ -21,6 +21,38 @@ import type {
   SettingHint,
 } from "../shared/types";
 import { LLAMA_OPTIONS, type LlamaOption, type OptionCategory } from "../shared/llamaOptions";
+import {
+  Card,
+  Stack,
+  Group,
+  Grid,
+  Text,
+  Title,
+  Button,
+  Select,
+  TextInput,
+  NumberInput,
+  Switch,
+  Badge,
+  Alert,
+  Accordion,
+  Tooltip,
+  List,
+  ThemeIcon,
+  Textarea,
+  Code,
+  Box,
+} from "@mantine/core";
+import {
+  IconX,
+  IconCheck,
+  IconRefresh,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconDeviceFloppy,
+  IconExternalLink,
+  IconActivity,
+} from "@tabler/icons-react";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,11 +63,11 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-const FIT_COLORS: Record<FitStatus, string> = {
-  GpuLikely: "#22c55e",
-  PartialGpu: "#eab308",
-  CpuOnly: "#3b82f6",
-  Unlikely: "#ef4444",
+const FIT_BADGE_COLORS: Record<FitStatus, string> = {
+  GpuLikely: "green",
+  PartialGpu: "yellow",
+  CpuOnly: "blue",
+  Unlikely: "red",
 };
 
 const FIT_LABELS: Record<FitStatus, string> = {
@@ -55,7 +87,6 @@ const CATEGORY_LABELS: Record<OptionCategory, string> = {
 
 const CATEGORY_ORDER: OptionCategory[] = ["model", "performance", "server", "sampling", "advanced"];
 
-
 function mergeSettings(base: LlamaSettings, override: Partial<LlamaSettings>): LlamaSettings {
   const merged = { ...base };
   for (const [k, v] of Object.entries(override)) {
@@ -66,7 +97,6 @@ function mergeSettings(base: LlamaSettings, override: Partial<LlamaSettings>): L
   return merged;
 }
 
-// Convert a string hint value from a model card into a typed JS value.
 function coerceHintValue(raw: string): unknown {
   if (raw === "true") return true;
   if (raw === "false") return false;
@@ -76,9 +106,6 @@ function coerceHintValue(raw: string): unknown {
   return raw;
 }
 
-// Extract HF repo/file hints from a modelsList rfilename like
-// "Repo--Name/model.Q4.gguf". Returns nulls if the path doesn't look
-// like an HF download.
 function splitHfPath(rfilename: string): { hfRepo?: string; hfFile?: string } {
   const idx = rfilename.indexOf("/");
   if (idx <= 0) return {};
@@ -122,67 +149,58 @@ function OptionControl({
   value: unknown;
   onChange: (key: keyof LlamaSettings, val: unknown) => void;
 }) {
-  const id = `opt-${opt.flag.replace(/[^a-z0-9]/gi, "_")}`;
   const key = opt.settingKey;
 
   if (!key) return null;
 
   if (opt.valueType === "boolean") {
     return (
-      <label className="run-option run-option-bool" title={opt.tooltip}>
-        <input
-          type="checkbox"
-          id={id}
+      <Tooltip label={opt.tooltip} withArrow position="top" disabled={!opt.tooltip}>
+        <Switch
+          label={opt.flag}
           checked={value === true}
-          onChange={(e) => onChange(key, e.target.checked)}
+          onChange={(e) => onChange(key, e.currentTarget.checked)}
+          size="sm"
         />
-        <span className="run-option-flag">{opt.flag}</span>
-      </label>
+      </Tooltip>
     );
   }
 
   if (opt.valueType === "number") {
-    const step = opt.settingKey === "temp" || opt.settingKey === "top_p" || opt.settingKey === "min_p" || opt.settingKey === "repeat_penalty"
-      ? 0.01
-      : 1;
+    const step =
+      opt.settingKey === "temp" ||
+      opt.settingKey === "top_p" ||
+      opt.settingKey === "min_p" ||
+      opt.settingKey === "repeat_penalty"
+        ? 0.01
+        : 1;
     return (
-      <label className="run-option" title={opt.tooltip}>
-        <span className="run-option-flag">{opt.flag}</span>
-        <input
-          type="number"
-          id={id}
-          className="run-option-input"
-          value={value !== undefined && value !== null ? String(value) : ""}
+      <Tooltip label={opt.tooltip} withArrow position="top" disabled={!opt.tooltip}>
+        <NumberInput
+          label={opt.flag}
+          value={value !== undefined && value !== null ? Number(value) : undefined}
           step={step}
-          onChange={(e) => {
-            const raw = e.target.value.trim();
-            if (raw === "") {
-              onChange(key, undefined);
-            } else {
-              const n = Number(raw);
-              if (!Number.isNaN(n)) onChange(key, n);
-            }
-          }}
+          onChange={(val) => onChange(key, val === "" ? undefined : val)}
+          size="sm"
         />
-      </label>
+      </Tooltip>
     );
   }
 
   return (
-    <label className="run-option" title={opt.tooltip}>
-      <span className="run-option-flag">{opt.flag}</span>
-      <input
-        type="text"
-        id={id}
-        className="run-option-input"
+    <Tooltip label={opt.tooltip} withArrow position="top" disabled={!opt.tooltip}>
+      <TextInput
+        label={opt.flag}
         value={value !== undefined && value !== null ? String(value) : ""}
-        onChange={(e) => onChange(key, e.target.value || undefined)}
+        onChange={(e) => onChange(key, e.currentTarget.value || undefined)}
+        size="sm"
       />
-    </label>
+    </Tooltip>
   );
 }
 
 // ── RunPage ────────────────────────────────────────────────────────────────
+
 interface RunPageProps {
   config: AppConfig | null;
   initialModelPath: string | null;
@@ -205,9 +223,7 @@ export default function RunPage({
   const [selectedProfileId, setSelectedProfileId] = useState<string>("__new");
   const [profileName, setProfileName] = useState<string>("");
 
-  const [settings, setSettings] = useState<LlamaSettings>(
-    { ...(config?.global_defaults ?? {}) },
-  );
+  const [settings, setSettings] = useState<LlamaSettings>({ ...(config?.global_defaults ?? {}) });
   const [serverState, setServerState] = useState<ServerStatus | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null);
@@ -405,7 +421,6 @@ export default function RunPage({
   const advancedByCategory = useMemo(() => {
     const grouped: Partial<Record<OptionCategory, LlamaOption[]>> = {};
     for (const opt of LLAMA_OPTIONS) {
-      // Skip the -m flag; it's set by the model picker, not manually
       if (opt.flag === "-m") continue;
       const cat = opt.category;
       (grouped[cat] ??= []).push(opt);
@@ -437,285 +452,354 @@ export default function RunPage({
 
   const isRunning = serverState?.running ?? false;
 
+  const modelSelectData = useMemo(
+    () =>
+      models.map((m) => ({
+        value: m.rfilename,
+        label: `${m.rfilename}${m.size != null ? ` (${formatBytes(m.size)})` : ""}`,
+      })),
+    [models],
+  );
+
+  const profileSelectData = useMemo(
+    () => [
+      ...profiles.map((p) => ({ value: p.id, label: p.name })),
+      { value: "__new", label: "+ New Profile" },
+    ],
+    [profiles],
+  );
+
   return (
-    <div className="run-page">
-      <h2>Run Model</h2>
+    <Stack gap="lg">
+      <Title order={2}>Run Model</Title>
 
       {/* ── Model picker ──────────────────────────────────────────────── */}
-      <section className="run-section">
-        <h3>Select Model</h3>
-        {modelsLoading && <p className="run-muted">Loading models…</p>}
-        {modelsError && <p className="run-error">{modelsError}</p>}
-        {!modelsLoading && models.length === 0 && (
-          <p className="run-muted">No GGUF models found. Download models or set the models directory in Setup.</p>
-        )}
-        {models.length > 0 && (
-          <select
-            className="run-select"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-          >
-            <option value="">-- Choose a model --</option>
-            {models.map((m) => (
-              <option key={m.rfilename} value={m.rfilename}>
-                {m.rfilename}
-                {m.size != null ? ` (${formatBytes(m.size)})` : ""}
-              </option>
-            ))}
-          </select>
-        )}
-      </section>
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Title order={3} size="h5">
+            Select Model
+          </Title>
+        </Card.Section>
+        <Stack gap="sm" mt="sm">
+          {modelsLoading && (
+            <Text c="dimmed" size="sm">
+              Loading models…
+            </Text>
+          )}
+          {modelsError && (
+            <Alert color="red" variant="light" icon={<IconX size={16} />}>
+              {modelsError}
+            </Alert>
+          )}
+          {!modelsLoading && models.length === 0 && (
+            <Text c="dimmed" size="sm">
+              No GGUF models found. Download models or set the models directory in Setup.
+            </Text>
+          )}
+          {models.length > 0 && (
+            <Select
+              placeholder="-- Choose a model --"
+              data={modelSelectData}
+              value={selectedModel || null}
+              onChange={(val) => setSelectedModel(val || "")}
+            />
+          )}
+        </Stack>
+      </Card>
 
       {/* ── Profile selector ──────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section">
-          <h3>Profile</h3>
-          <div className="run-profile-row">
-            <select
-              className="run-select run-profile-select"
-              value={selectedProfileId}
-              onChange={async (e) => {
-                const id = e.target.value;
-                setSelectedProfileId(id);
-                if (id === "__new") {
-                  setProfileName("Default");
-                  setSettings({ ...(config?.global_defaults ?? {}) });
-                } else {
-                  const p = profiles.find((pr) => pr.id === id);
-                  if (p) {
-                    setProfileName(p.name);
-                    setSettings(
-                      mergeSettings({ ...(config?.global_defaults ?? {}) }, p.settings),
-                    );
-                  }
-                }
-              }}
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-              <option value="__new">+ New Profile</option>
-            </select>
-            <input
-              type="text"
-              className="run-input"
-              placeholder="Profile name"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-            />
-          </div>
-        </section>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">
+              Profile
+            </Title>
+          </Card.Section>
+          <Stack gap="sm" mt="sm">
+            <Grid align="flex-end">
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <Select
+                  label="Profile"
+                  data={profileSelectData}
+                  value={selectedProfileId}
+                  onChange={(val) => {
+                    const id = val || "__new";
+                    setSelectedProfileId(id);
+                    if (id === "__new") {
+                      setProfileName("Default");
+                      setSettings({ ...(config?.global_defaults ?? {}) });
+                    } else {
+                      const p = profiles.find((pr) => pr.id === id);
+                      if (p) {
+                        setProfileName(p.name);
+                        setSettings(mergeSettings({ ...(config?.global_defaults ?? {}) }, p.settings));
+                      }
+                    }
+                  }}
+                />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput
+                  label="Profile Name"
+                  placeholder="Profile name"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.currentTarget.value)}
+                />
+              </Grid.Col>
+            </Grid>
+          </Stack>
+        </Card>
       )}
 
       {/* ── Quick settings ────────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section">
-          <h3>Quick Settings</h3>
-          <div className="run-quick-grid">
-            {quickOptions.map((opt) =>
-              opt.settingKey ? (
-                <OptionControl
-                  key={opt.flag}
-                  opt={opt}
-                  value={settings[opt.settingKey]}
-                  onChange={updateSetting}
-                />
-              ) : null,
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">
+              Quick Settings
+            </Title>
+          </Card.Section>
+          <Stack gap="sm" mt="sm">
+            <Grid>
+              {quickOptions.map((opt) =>
+                opt.settingKey ? (
+                  <Grid.Col key={opt.flag} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+                    <OptionControl
+                      opt={opt}
+                      value={settings[opt.settingKey]}
+                      onChange={updateSetting}
+                    />
+                  </Grid.Col>
+                ) : null,
+              )}
+            </Grid>
+            {settings.n_gpu_layers !== undefined && settings.n_gpu_layers !== null && (
+              <Text size="xs" c="dimmed">
+                GPU layers: -1 = all, 0 = CPU only, 99 = auto-detect
+              </Text>
             )}
-          </div>
-          {settings.n_gpu_layers !== undefined && settings.n_gpu_layers !== null && (
-            <p className="run-helper">
-              GPU layers: -1 = all, 0 = CPU only, 99 = auto-detect
-            </p>
-          )}
-        </section>
+          </Stack>
+        </Card>
       )}
 
       {/* ── Hardware fit ──────────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section">
-          <h3>Hardware Fit</h3>
-          {!hardware ? (
-            <p className="run-muted">Hardware info not available. Run a hardware scan in Setup.</p>
-          ) : (
-            <>
-              <button
-                className="run-btn run-btn-secondary"
-                onClick={handleCheckFit}
-                disabled={selectedModelSize === null || recLoading}
-              >
-                {recLoading ? "Checking…" : "Check Fit"}
-              </button>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">
+              Hardware Fit
+            </Title>
+          </Card.Section>
+          <Stack gap="sm" mt="sm">
+            {!hardware ? (
+              <Text c="dimmed" size="sm">
+                Hardware info not available. Run a hardware scan in Setup.
+              </Text>
+            ) : (
+              <>
+                <Button
+                  variant="light"
+                  onClick={handleCheckFit}
+                  loading={recLoading}
+                  disabled={selectedModelSize === null}
+                  leftSection={<IconActivity size={16} />}
+                >
+                  Check Fit
+                </Button>
 
-              {recommendation && (
-                <div className="run-fit-result">
-                  <div className="run-fit-badge-row">
-                    <span
-                      className="run-fit-badge"
-                      style={{ backgroundColor: FIT_COLORS[recommendation.fit_status] }}
-                    >
-                      {FIT_LABELS[recommendation.fit_status]}
-                    </span>
-                    <span className="run-fit-confidence">
-                      Confidence: {recommendation.confidence}
-                    </span>
-                  </div>
-                  <div className="run-fit-estimates">
-                    <span>Model: {formatBytes(recommendation.estimated_model_size_bytes)}</span>
-                    <span>RAM needed: {formatBytes(recommendation.estimated_ram_required_bytes)}</span>
-                    <span>VRAM needed: {formatBytes(recommendation.estimated_vram_required_bytes)}</span>
-                  </div>
-                  {recommendation.notes.length > 0 && (
-                    <ul className="run-fit-notes">
-                      {recommendation.notes.map((n, i) => (
-                        <li key={i}>{n}</li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="run-fit-suggest">
-                    <p>
-                      Suggested: GPU layers={recommendation.suggested_gpu_layers}, ctx={recommendation.suggested_ctx_size},
-                      threads={recommendation.suggested_threads}, batch={recommendation.suggested_batch_size}
-                      {recommendation.use_fit_flag && ", --fit on"}
-                    </p>
-                    <button className="run-btn run-btn-secondary" onClick={handleApplyRecommendation}>
-                      Apply Suggested Values
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </section>
+                {recommendation && (
+                  <Stack gap="xs">
+                    <Group gap="sm">
+                      <Badge color={FIT_BADGE_COLORS[recommendation.fit_status]} variant="light" size="lg">
+                        {FIT_LABELS[recommendation.fit_status]}
+                      </Badge>
+                      <Text size="sm" c="dimmed">
+                        Confidence: {recommendation.confidence}
+                      </Text>
+                    </Group>
+                    <Group gap="md">
+                      <Text size="sm">Model: {formatBytes(recommendation.estimated_model_size_bytes)}</Text>
+                      <Text size="sm">RAM needed: {formatBytes(recommendation.estimated_ram_required_bytes)}</Text>
+                      <Text size="sm">VRAM needed: {formatBytes(recommendation.estimated_vram_required_bytes)}</Text>
+                    </Group>
+                    {recommendation.notes.length > 0 && (
+                      <List size="sm" spacing="xs" withPadding>
+                        {recommendation.notes.map((n, i) => (
+                          <List.Item key={i}>{n}</List.Item>
+                        ))}
+                      </List>
+                    )}
+                    <Stack gap="xs">
+                      <Text size="sm">
+                        Suggested: GPU layers={recommendation.suggested_gpu_layers}, ctx=
+                        {recommendation.suggested_ctx_size}, threads={recommendation.suggested_threads}, batch=
+                        {recommendation.suggested_batch_size}
+                        {recommendation.use_fit_flag && ", --fit on"}
+                      </Text>
+                      <Button
+                        variant="light"
+                        onClick={handleApplyRecommendation}
+                        leftSection={<IconCheck size={16} />}
+                      >
+                        Apply Suggested Values
+                      </Button>
+                    </Stack>
+                  </Stack>
+                )}
+              </>
+            )}
+          </Stack>
+        </Card>
       )}
 
       {/* ── Advanced accordion ────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section">
-          <button
-            className="run-accordion-toggle"
-            onClick={() => setAdvancedOpen((v) => !v)}
-          >
-            {advancedOpen ? "▾" : "▸"} Advanced Options
-          </button>
-          {advancedOpen && (
-            <div className="run-accordion-body">
-              {CATEGORY_ORDER.map((cat) => {
-                const opts = advancedByCategory[cat];
-                if (!opts?.length) return null;
-                return (
-                  <div key={cat} className="run-adv-category">
-                    <h4>{CATEGORY_LABELS[cat]}</h4>
-                    <div className="run-adv-grid">
-                      {opts.map((opt) =>
-                        opt.settingKey ? (
-                          <OptionControl
-                            key={opt.flag}
-                            opt={opt}
-                            value={settings[opt.settingKey]}
-                            onChange={updateSetting}
-                          />
-                        ) : (
-                          <div key={opt.flag} className="run-option run-option-readonly" title={opt.tooltip}>
-                            <span className="run-option-flag">{opt.flag}</span>
-                            <span className="run-option-info">(set via other controls)</span>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+        <Accordion
+          value={advancedOpen ? "advanced" : null}
+          onChange={(val) => setAdvancedOpen(!!val)}
+          variant="contained"
+          radius="md"
+        >
+          <Accordion.Item value="advanced">
+            <Accordion.Control>Advanced Options</Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap="md">
+                {CATEGORY_ORDER.map((cat) => {
+                  const opts = advancedByCategory[cat];
+                  if (!opts?.length) return null;
+                  return (
+                    <Stack key={cat} gap="xs">
+                      <Title order={4} size="h6">
+                        {CATEGORY_LABELS[cat]}
+                      </Title>
+                      <Grid>
+                        {opts.map((opt) =>
+                          opt.settingKey ? (
+                            <Grid.Col key={opt.flag} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+                              <OptionControl
+                                opt={opt}
+                                value={settings[opt.settingKey]}
+                                onChange={updateSetting}
+                              />
+                            </Grid.Col>
+                          ) : (
+                            <Grid.Col key={opt.flag} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+                              <Tooltip label={opt.tooltip} withArrow disabled={!opt.tooltip}>
+                                <Box>
+                                  <Code>{opt.flag}</Code>{" "}
+                                  <Text span c="dimmed" size="sm">
+                                    (set via other controls)
+                                  </Text>
+                                </Box>
+                              </Tooltip>
+                            </Grid.Col>
+                          ),
+                        )}
+                      </Grid>
+                    </Stack>
+                  );
+                })}
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
       )}
 
       {/* ── Command preview ───────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section">
-          <h3>Command Preview</h3>
-          <textarea
-            className="run-command-preview"
-            readOnly
-            rows={3}
-            value={commandPreview}
-          />
-        </section>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">
+              Command Preview
+            </Title>
+          </Card.Section>
+          <Box mt="sm">
+            <Textarea readOnly rows={3} value={commandPreview} />
+          </Box>
+        </Card>
       )}
 
       {/* ── Server controls ───────────────────────────────────────────── */}
       {selectedModel && (
-        <section className="run-section run-controls">
-          <div className="run-controls-row">
-            {!isRunning ? (
-              <button
-                className="run-btn run-btn-primary"
-                onClick={handleStart}
-                disabled={actionLoading || !config?.llama_server_path}
+        <Card withBorder>
+          <Stack gap="sm">
+            <Group gap="sm" wrap="nowrap">
+              {!isRunning ? (
+                <Button
+                  onClick={handleStart}
+                  loading={actionLoading}
+                  disabled={!config?.llama_server_path}
+                  leftSection={<IconPlayerPlay size={16} />}
+                >
+                  Start Server
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    color="red"
+                    onClick={handleStop}
+                    loading={actionLoading}
+                    leftSection={<IconPlayerStop size={16} />}
+                  >
+                    Stop Server
+                  </Button>
+                  <Button
+                    variant="light"
+                    onClick={handleRestart}
+                    disabled={actionLoading}
+                    leftSection={<IconRefresh size={16} />}
+                  >
+                    Restart
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="light"
+                onClick={handleSaveProfile}
+                disabled={!selectedModel}
+                leftSection={<IconDeviceFloppy size={16} />}
               >
-                {actionLoading ? "Starting…" : "Start Server"}
-              </button>
-            ) : (
-              <>
-                <button
-                  className="run-btn run-btn-danger"
-                  onClick={handleStop}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? "Stopping…" : "Stop Server"}
-                </button>
-                <button
-                  className="run-btn run-btn-secondary"
-                  onClick={handleRestart}
-                  disabled={actionLoading}
-                >
-                  Restart
-                </button>
-              </>
-            )}
-            <button
-              className="run-btn run-btn-secondary"
-              onClick={handleSaveProfile}
-              disabled={!selectedModel}
-            >
-              Save Profile
-            </button>
-          </div>
-          {saveMessage && <p className="run-save-msg">{saveMessage}</p>}
+                Save Profile
+              </Button>
+            </Group>
 
-          {/* Status indicator */}
-          <div className="run-status-bar">
-            <span
-              className="run-status-dot"
-              style={{ backgroundColor: isRunning ? "#22c55e" : "#6b7280" }}
-            />
-            <span>
-              {isRunning
-                ? `Running (PID ${serverState?.pid ?? "?"})`
-                : "Stopped"}
-            </span>
-            {isRunning && serverState?.health && (
-              <span className="run-status-health">
-                Health: {serverState.health}
-              </span>
+            {saveMessage && (
+              <Alert
+                color={saveMessage.includes("failed") ? "red" : "green"}
+                variant="light"
+                icon={saveMessage.includes("failed") ? <IconX size={16} /> : <IconCheck size={16} />}
+              >
+                {saveMessage}
+              </Alert>
             )}
-            {isRunning && config && (
-              <span className="run-status-link">
-                <a
+
+            <Group gap="sm" wrap="nowrap">
+              <ThemeIcon color={isRunning ? "green" : "gray"} size={12} radius="xl" />
+              <Text size="sm">
+                {isRunning ? `Running (PID ${serverState?.pid ?? "?"})` : "Stopped"}
+              </Text>
+              {isRunning && serverState?.health && (
+                <Badge color="blue" variant="light" size="sm">
+                  Health: {serverState.health}
+                </Badge>
+              )}
+              {isRunning && config && (
+                <Button
+                  component="a"
                   href={`http://${settings.host ?? config.host}:${settings.port ?? config.port}`}
                   target="_blank"
                   rel="noopener noreferrer"
+                  variant="subtle"
+                  size="xs"
+                  rightSection={<IconExternalLink size={14} />}
                 >
-                  Open UI →
-                </a>
-              </span>
-            )}
-          </div>
-        </section>
+                  Open UI
+                </Button>
+              )}
+            </Group>
+          </Stack>
+        </Card>
       )}
-    </div>
+    </Stack>
   );
 }

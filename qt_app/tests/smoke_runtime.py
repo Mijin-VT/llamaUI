@@ -57,30 +57,25 @@ def test_build_argv_minimal() -> None:
     with tempfile.TemporaryDirectory() as td:
         model_file = Path(td) / "test.gguf"
         model_file.write_bytes(b"\x00" * 16)
-
         config = AppConfig(llama_server_path="/usr/bin/llama-server")
         model = LocalModel.from_path(str(model_file))
-
         argv = build_argv(config, model)
         check(argv[0] == "/usr/bin/llama-server", "binary path is first")
         check("--model" in argv, "--model flag present")
         check(str(model_file) in argv, "model path present")
-        check("--host" in argv, "--host flag present")
-        check("--port" in argv, "--port flag present")
-        check("8080" in argv, "default port 8080")
-
+        # host=127.0.0.1 and port=8080 match catalog defaults — no flag emitted.
+        check("--host" not in argv, "default host not emitted")
+        check("--port" not in argv, "default port not emitted")
 
 def test_build_argv_with_profile() -> None:
     print("[argv] config + model + profile")
     with tempfile.TemporaryDirectory() as td:
         model_file = Path(td) / "model.gguf"
         model_file.write_bytes(b"\x00" * 16)
-
         config = AppConfig(llama_server_path="/usr/bin/llama-server", port=9999)
         model = LocalModel.from_path(str(model_file))
-
         settings = SettingValueMap({
-            "ctx_size": LlamaOptionValue(OptionKind.INTEGER, 4096),
+            "ctx_size": LlamaOptionValue(OptionKind.INTEGER, 8192),
             "n_gpu_layers": LlamaOptionValue(OptionKind.INTEGER, 99),
             "temp": LlamaOptionValue(OptionKind.FLOAT, 0.7),
             "verbose": LlamaOptionValue(OptionKind.BOOLEAN, True),
@@ -88,23 +83,32 @@ def test_build_argv_with_profile() -> None:
         profile = ModelProfile(
             id="p1", model_id=model.id, name="test-profile",
             settings=settings,
+            user_set={"ctx_size", "n_gpu_layers", "temp", "verbose"},
             raw_args=["--special-arg", "val"],
         )
-
         argv = build_argv(config, model, profile)
-
-        check("--port" in argv and "9999" in argv, "config port overrides profile")
-        check("--ctx-size" in argv and "4096" in argv, "profile ctx_size rendered")
+        # port=9999 differs from catalog default 8080 → emitted
+        check("--port" in argv and "9999" in argv, "config port 9999 emitted")
+        # host=127.0.0.1 matches catalog default → not emitted
+        check("--host" not in argv, "default host not emitted")
+        check("--ctx-size" in argv and "8192" in argv, "profile ctx_size rendered")
         check("--n-gpu-layers" in argv and "99" in argv, "profile n_gpu_layers rendered")
         check("--temp" in argv and "0.7" in argv, "profile temp rendered")
         check("--verbose" in argv, "profile boolean True emitted as flag")
         check("--special-arg" in argv and "val" in argv, "raw_args appended")
-
-        # model/host/port from profile should NOT duplicate.
+        # model should appear exactly once.
         model_count = argv.count("--model")
         check(model_count == 1, f"--model appears exactly once (got {model_count})")
-
-
+def test_build_argv_nondefault_host() -> None:
+    print("[argv] config with non-default host")
+    with tempfile.TemporaryDirectory() as td:
+        model_file = Path(td) / "model.gguf"
+        model_file.write_bytes(b"\x00" * 16)
+        config = AppConfig(llama_server_path="/usr/bin/llama-server", host="0.0.0.0")
+        model = LocalModel.from_path(str(model_file))
+        argv = build_argv(config, model)
+        check("--host" in argv and "0.0.0.0" in argv, "non-default host emitted")
+        check("--port" not in argv, "default port not emitted")
 def test_build_argv_no_binary_raises() -> None:
     print("[argv] missing binary raises ValueError")
     config = AppConfig(llama_server_path=None)
@@ -114,8 +118,6 @@ def test_build_argv_no_binary_raises() -> None:
         check(False, "should have raised")
     except ValueError:
         check(True, "ValueError raised for missing binary path")
-
-
 # ---- LogBuffer -----------------------------------------------------------
 
 

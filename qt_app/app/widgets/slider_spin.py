@@ -38,6 +38,7 @@ class SliderSpinBox(QWidget):
         layout.setSpacing(8)
         layout.addWidget(self._slider, 1)
         layout.addWidget(self._spin, 0)
+        self.setStyleSheet("background: transparent; border: none;")
 
         self._slider.valueChanged.connect(self._on_slider)
         self._spin.valueChanged.connect(self._on_spin)
@@ -119,6 +120,7 @@ class SliderDoubleSpinBox(QWidget):
         layout.setSpacing(8)
         layout.addWidget(self._slider, 1)
         layout.addWidget(self._spin, 0)
+        self.setStyleSheet("background: transparent; border: none;")
 
         self._slider.valueChanged.connect(self._on_slider)
         self._spin.valueChanged.connect(self._on_spin)

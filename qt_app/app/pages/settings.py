@@ -1,22 +1,18 @@
 from __future__ import annotations
-
 import os
 from typing import Optional
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
-    QGridLayout,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
-    QPushButton,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
 )
-
 from llama_data.llama_options import LLAMA_OPTION_CATALOG, SettingValueMap
 from llama_data.models import AppConfig, HfTokenSource
 from llama_data.stores import ConfigStore
@@ -46,26 +42,13 @@ class SettingsPage(PageBase):
         self.setProperty("subtitle", "Configure paths, connection, and Hugging Face access.")
         self._load_config()
 
-        # --- Card 1: llama-server binary ---
         self._build_binary_card()
-
-        # --- Card 2: Models directory ---
         self._build_models_dir_card()
-
-        # --- Card 3: Connection settings ---
         self._build_connection_card()
-        # --- Card 4: Server Mode ---
         self._build_server_mode_card()
-        # --- Card 5: Global defaults ---
         self._build_global_defaults_card()
-
-        # --- Card 5: Hugging Face token ---
         self._build_hf_token_card()
-
-        # --- Card 6: Binary introspection ---
         self._build_introspection_card()
-
-        # --- Save button row ---
         self._build_save_row()
 
     # ------------------------------------------------------------------
@@ -80,6 +63,7 @@ class SettingsPage(PageBase):
         layout.addWidget(CardTitle("llama-server binary", card))
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self._server_path_input = QLineEdit(card)
         self._server_path_input.setPlaceholderText("/path/to/llama-server")
         if self._config and self._config.llama_server_path:
@@ -103,6 +87,7 @@ class SettingsPage(PageBase):
         layout.addWidget(CardTitle("Model Download Directory", card))
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self._models_dir_input = QLineEdit(card)
         self._models_dir_input.setPlaceholderText("Directory for downloaded GGUF files")
         if self._config and self._config.models_dir:
@@ -122,30 +107,22 @@ class SettingsPage(PageBase):
         layout.setSpacing(10)
         layout.addWidget(CardTitle("Connection Settings", card))
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        host_label = QLabel("Host", card)
-        host_label.setObjectName("Muted")
-        host_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(host_label, 0, 0)
         self._host_input = QLineEdit(card)
         self._host_input.setText(self._config.host if self._config else "127.0.0.1")
-        self._host_input.setFixedWidth(180)
-        grid.addWidget(self._host_input, 0, 1)
-        port_label = QLabel("Port", card)
-        port_label.setObjectName("Muted")
-        port_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(port_label, 1, 0)
+        self._host_input.setMinimumWidth(200)
+        form.addRow("Host", self._host_input)
+
         self._port_input = QSpinBox(card)
         self._port_input.setRange(1, 65535)
         self._port_input.setValue(self._config.port if self._config else 8080)
-        self._port_input.setFixedWidth(120)
-        grid.addWidget(self._port_input, 1, 1)
-        grid.setColumnStretch(2, 1)
+        form.addRow("Port", self._port_input)
 
-        layout.addLayout(grid)
+        layout.addLayout(form)
         self._layout.addWidget(card)
 
     def _build_server_mode_card(self) -> None:
@@ -166,25 +143,29 @@ class SettingsPage(PageBase):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        # Router mode toggle
         self._router_mode_check = QCheckBox("Enable router mode (--models-dir)", card)
         self._router_mode_check.setChecked(self._config.router_mode if self._config else False)
         self._router_mode_check.toggled.connect(self._on_router_mode_toggled)
         layout.addWidget(self._router_mode_check)
 
-        # Models dir row — reuse the shared _models_dir_input from the
-        # download directory card so both cards stay in sync.
-        dir_row = QHBoxLayout()
-        dir_label = QLabel("Models dir", card)
-        dir_label.setObjectName("Muted")
-        dir_row.addWidget(dir_label)
-        dir_row.addWidget(self._models_dir_input, 1)
-        layout.addLayout(dir_row)
+        # Show the models dir as a read-only label so it doesn't steal the
+        # editable input from the download directory card.
+        self._router_dir_display = QLabel(card)
+        self._router_dir_display.setObjectName("Muted")
+        self._router_dir_display.setWordWrap(True)
+        self._router_dir_display.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self._router_dir_display)
+        self._on_router_mode_toggled(self._router_mode_check.isChecked())
 
         self._layout.addWidget(card)
 
     def _on_router_mode_toggled(self, checked: bool) -> None:
-        self._models_dir_input.setEnabled(checked)
+        if hasattr(self, '_models_dir_input'):
+            self._models_dir_input.setEnabled(True)  # always editable
+        if hasattr(self, '_router_dir_display'):
+            path = self._models_dir_input.text().strip() if hasattr(self, '_models_dir_input') else ""
+            self._router_dir_display.setText(f"Models directory: {path or '—'}")
+            self._router_dir_display.setVisible(checked)
 
     def _build_global_defaults_card(self) -> None:
         card = Card(self._body)
@@ -192,61 +173,78 @@ class SettingsPage(PageBase):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
         layout.addWidget(CardTitle("Global defaults", card))
-        grid = QGridLayout()
-        self._global_threads = QSpinBox(card); self._global_threads.setRange(0, 1024)
-        self._global_batch = QSpinBox(card); self._global_batch.setRange(0, 1_000_000)
-        self._global_gpu_layers = QSpinBox(card); self._global_gpu_layers.setRange(0, 1_000_000)
-        self._global_temp = QDoubleSpinBox(card); self._global_temp.setDecimals(3); self._global_temp.setRange(0.0, 10.0)
-        fields = [("Threads", self._global_threads, "threads"), ("Batch size", self._global_batch, "batch_size"), ("GPU layers", self._global_gpu_layers, "n_gpu_layers"), ("Temperature", self._global_temp, "temp")]
-        for row, (label, widget, option_id) in enumerate(fields):
-            lbl = QLabel(label, card)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(lbl, row, 0)
-            widget.setFixedWidth(120)
-            grid.addWidget(widget, row, 1)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        self._global_threads = QSpinBox(card)
+        self._global_threads.setRange(0, 1024)
+        form.addRow("Threads", self._global_threads)
+
+        self._global_batch = QSpinBox(card)
+        self._global_batch.setRange(0, 1_000_000)
+        form.addRow("Batch size", self._global_batch)
+
+        self._global_gpu_layers = QSpinBox(card)
+        self._global_gpu_layers.setRange(0, 1_000_000)
+        form.addRow("GPU layers", self._global_gpu_layers)
+
+        self._global_temp = QDoubleSpinBox(card)
+        self._global_temp.setDecimals(3)
+        self._global_temp.setRange(0.0, 10.0)
+        form.addRow("Temperature", self._global_temp)
+
+        fields = [
+            ("threads", self._global_threads),
+            ("batch_size", self._global_batch),
+            ("n_gpu_layers", self._global_gpu_layers),
+            ("temp", self._global_temp),
+        ]
+        for option_id, widget in fields:
             value = self._config.global_settings.get(option_id) if self._config else None
             if value is not None and value.value is not None:
                 if isinstance(widget, QDoubleSpinBox):
                     widget.setValue(float(value.value))
                 else:
                     widget.setValue(int(value.value))
-        grid.setColumnStretch(2, 1)
-        layout.addLayout(grid)
+
+        layout.addLayout(form)
         self._layout.addWidget(card)
 
     def _build_hf_token_card(self) -> None:
         card = Card(self._body)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
         layout.addWidget(CardTitle("Hugging Face Token", card))
 
-        # Token source row
-        source_row = QHBoxLayout()
+        # Source row
+        source_layout = QHBoxLayout()
+        source_layout.setSpacing(8)
         source_label = QLabel("Token source:", card)
         source_label.setObjectName("Muted")
-        source_row.addWidget(source_label)
-
+        source_layout.addWidget(source_label)
         self._token_chip = Chip("No token", "muted", card)
-        source_row.addWidget(self._token_chip)
-        source_row.addStretch()
-
+        source_layout.addWidget(self._token_chip)
+        source_layout.addStretch()
         self._clear_token_btn = DangerButton("Clear", card)
         self._clear_token_btn.clicked.connect(self._clear_token)
-        source_row.addWidget(self._clear_token_btn)
-        layout.addLayout(source_row)
+        source_layout.addWidget(self._clear_token_btn)
+        layout.addLayout(source_layout)
 
-        # New token input row
-        token_row = QHBoxLayout()
+        # Input row
+        input_layout = QHBoxLayout()
+        input_layout.setSpacing(8)
         self._token_input = QLineEdit(card)
         self._token_input.setPlaceholderText("hf_xxxxxxxx (optional)")
         self._token_input.setEchoMode(QLineEdit.EchoMode.Password)
-        token_row.addWidget(self._token_input, 1)
-
+        input_layout.addWidget(self._token_input, 1)
         save_token_btn = SuccessButton("Save + Validate", card)
         save_token_btn.clicked.connect(self._save_token)
-        token_row.addWidget(save_token_btn)
-        layout.addLayout(token_row)
+        input_layout.addWidget(save_token_btn)
+        layout.addLayout(input_layout)
 
         # Feedback
         self._token_feedback = QLabel("", card)
@@ -275,7 +273,10 @@ class SettingsPage(PageBase):
         layout.setSpacing(10)
         layout.addWidget(CardTitle("Binary Introspection", card))
 
-        self._summary = QLabel("No binary parsed yet.", card)
+        self._summary = QLabel(
+            "Validate a llama-server binary to see its version, supported options, and capabilities.",
+            card,
+        )
         self._summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._summary.setObjectName("Muted")
         self._summary.setWordWrap(True)
@@ -285,12 +286,14 @@ class SettingsPage(PageBase):
         self._details.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._details.setReadOnly(True)
         self._details.setMaximumHeight(220)
+        self._details.setPlaceholderText("Parsed binary details will appear here...")
         layout.addWidget(self._details)
 
         self._layout.addWidget(card)
 
     def _build_save_row(self) -> None:
         row = QHBoxLayout()
+        row.setSpacing(12)
         row.addStretch()
 
         self._save_feedback = QLabel("", self._body)
@@ -365,6 +368,9 @@ class SettingsPage(PageBase):
         result = pick_directory(self, title="Select model download directory")
         if result.accepted and result.paths:
             self._models_dir_input.setText(str(result.paths[0]))
+            # Update the router mode display if it exists
+            if hasattr(self, '_router_dir_display'):
+                self._router_dir_display.setText(f"Models directory: {str(result.paths[0])}")
 
     def _validate(self) -> None:
         path = self._server_path_input.text().strip()
@@ -429,7 +435,6 @@ class SettingsPage(PageBase):
         except Exception as exc:
             self._show_token_feedback(f"Failed: {exc}")
 
-
     # ------------------------------------------------------------------
     # UI helpers
     # ------------------------------------------------------------------
@@ -474,7 +479,7 @@ class SettingsPage(PageBase):
     def _show_save_feedback(self, msg: str, *, success: bool) -> None:
         self._save_feedback.setText(msg)
         self._save_feedback.setStyleSheet(
-            f"color: {'#16a34a' if success else '#991b1b'};"
+            f"color: {'#22c55e' if success else '#ef4444'};"
         )
         if self._save_feedback_timer is not None:
             self._save_feedback_timer.stop()

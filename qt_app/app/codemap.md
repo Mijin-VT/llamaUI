@@ -6,14 +6,15 @@ This package is the native Qt shell for llamaUI. It bootstraps the `QApplication
 
 - **`__init__.py`** — Public API: exports `create_app`, `MainWindow`, and `NavItemId`.
 - **`application.py`** — Singleton `QApplication` factory. Sets HiDPI env hints (`QT_ENABLE_HIGHDPI_SCALING`, `QT_AUTO_SCREEN_SCALE_FACTOR`), application identity (`llamaUI`), and applies the global dark palette + QSS stylesheet.
-- **`main_window.py`** — `MainWindow` (`QMainWindow`) is the persistent shell. It hosts a left `Sidebar`, a top header (`QLabel` title/subtitle), and a central `QStackedWidget` that swaps the five page widgets. It also persists splitter sizes via `QSettings` and routes inter-page navigation requests.
-- **`theme.py`** — Single source of truth for the dark theme: color tokens (`BG_APP`, `ACCENT`, `DANGER`, etc.), typography (`FontSpec`), layout constants (`SIDEBAR_WIDTH`, `HEADER_HEIGHT`), the full QSS stylesheet (`build_stylesheet()`), and a dark `QPalette` (`apply_palette()`).
+- **`main_window.py`** — `MainWindow` (`QMainWindow`) is the persistent shell. It hosts a left `Sidebar`, a top header (`QLabel` title/subtitle), and a central `QStackedWidget` that swaps the five page widgets. It persists splitter sizes and sidebar collapsed state via `QSettings`, connects `Sidebar.collapse_changed`, uses the theme-configurable splitter handle width, and routes inter-page navigation requests.
+- **`theme.py`** — Single source of truth for the dark theme: color tokens (`BG_APP`, `ACCENT`, `DANGER`, etc.), typography (`FontSpec`), layout constants (`SIDEBAR_WIDTH`, `SIDEBAR_COLLAPSED_WIDTH`, `SPLITTER_HANDLE_WIDTH`, `HEADER_HEIGHT`), the full QSS stylesheet (`build_stylesheet()`), and a dark `QPalette` (`apply_palette()`). Styles include wrapped tabs (`WrappedTabBtn`, `WrappedTabBar`, `WrappedTabStack`), collapsed sidebar nav items, the sidebar toggle button, and the splitter handle.
 
 ## Design Patterns
 
 - **Singleton Application** — `create_app()` returns `QApplication.instance()` if one exists; otherwise it constructs and configures a new instance. This lets tests and CLI entry points share the same app object.
 - **Shell / Page Decoupling** — `MainWindow` knows pages only as `QWidget` instances mapped by `NavItemId`. Pages are constructed once and added to a `QStackedWidget`; navigation is a stack index switch.
 - **Signal-Driven Navigation** — `Sidebar.navigated` emits a `NavItemId`; `MainWindow.navigate()` switches the stack and updates the header. Pages can emit `navigate_requested(str)` to request a cross-page jump (e.g. Library → Run).
+- **Collapsible Sidebar** — `Sidebar.collapse_changed(bool)` tells `MainWindow` to adjust splitter sizes; `MainWindow` persists the collapsed state in `QSettings` and restores it on startup.
 - **Shared Store Injection** — `MainWindow` instantiates the three persisted stores (`ConfigStore`, `LibraryStore`, `ProfileStore`) and passes them as constructor arguments to the pages that need them. Pages do not create their own store instances.
 - **Theme as Static Configuration** — `theme.py` uses module-level constants and pure functions. The stylesheet is built at call time (not import time) to avoid side effects, but the token values are immutable.
 - **Compatibility No-Ops** — `set_inspector_visible` and `_set_inspector_collapsed` remain as no-op stubs so that code referencing the legacy three-pane inspector layout does not break; runtime status now lives inside the sidebar.
@@ -24,7 +25,7 @@ This package is the native Qt shell for llamaUI. It bootstraps the `QApplication
 2. **Shell Construction** — `MainWindow.__init__()` builds the layout tree:
    - `QSplitter` (horizontal) → left `Sidebar` + right "center column".
    - Center column → `TopHeader` (`QLabel` title/subtitle) + `QStackedWidget`.
-   - Splitter sizes are restored from `QSettings` and saved on `splitterMoved`.
+   - Splitter sizes are restored from `QSettings` and saved on `splitterMoved`; sidebar collapse state is restored, `Sidebar.collapse_changed` is wired, and collapse changes adjust splitter sizes.
 3. **Page Lifecycle** — All five pages (`LibraryPage`, `DiscoverPage`, `RunPage`, `SettingsPage`, `DiagnosticsPage`) are constructed up front. Each is added to the stack. Optional signals are connected:
    - `navigate_requested` → `MainWindow._on_page_navigate`
    - `inspector_changed` → `MainWindow._on_inspector_changed` (forwards payload to `Sidebar.update_details`)

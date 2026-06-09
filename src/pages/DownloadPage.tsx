@@ -1,5 +1,32 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
+  Card,
+  Stack,
+  Group,
+  Grid,
+  Text,
+  Button,
+  TextInput,
+  Badge,
+  Alert,
+  Progress,
+  Title,
+  Box,
+} from "@mantine/core";
+import classes from "./DownloadPage.module.css";
+import {
+  IconSearch,
+  IconCaretDown,
+  IconCaretRight,
+  IconDownload,
+  IconCheck,
+  IconPlayerPlay,
+  IconX,
+  IconRefresh,
+  IconAlertTriangle,
+  IconHeart,
+} from "@tabler/icons-react";
+import {
   hfSearch,
   downloadStart,
   downloadCancel,
@@ -247,18 +274,6 @@ export default function DownloadPage({
   }
 
   // -----------------------------------------------------------------------
-  // Tag badge
-  // -----------------------------------------------------------------------
-
-  function tagBadge(label: string, className: string) {
-    return (
-      <span key={label} className={`tag-badge ${className}`}>
-        {label}
-      </span>
-    );
-  }
-
-  // -----------------------------------------------------------------------
   // Render file row
   // -----------------------------------------------------------------------
 
@@ -276,84 +291,101 @@ export default function DownloadPage({
         : null;
 
     return (
-      <div key={file.rfilename} className="gguf-file-row">
-        <div className="gguf-file-info">
-          <span className="gguf-filename">{file.rfilename}</span>
-          {file.size != null && (
-            <span className="gguf-size">{formatBytes(file.size)}</span>
-          )}
-        </div>
+      <Box key={file.rfilename} py="xs">
+        <Group justify="space-between" wrap="nowrap" gap="sm">
+          <Group gap="sm" wrap="nowrap">
+            <Text size="sm" fw={500}>
+              {file.rfilename}
+            </Text>
+            {file.size != null && (
+              <Text size="xs" c="dimmed">
+                {formatBytes(file.size)}
+              </Text>
+            )}
+          </Group>
+
+          <Group gap="xs" wrap="nowrap">
+            {isDone && (
+              <>
+                <Text size="sm" c="green">
+                  <IconCheck size={16} />{" "}
+                  Downloaded
+                </Text>
+                {localPathFor(file.rfilename) && (
+                  <Button
+                    size="xs"
+                    leftSection={<IconPlayerPlay size={14} />}
+                    onClick={() =>
+                      onSelectModel(localPathFor(file.rfilename)!)
+                    }
+                  >
+                    Run this model
+                  </Button>
+                )}
+              </>
+            )}
+            {isDownloading && (
+              <Button
+                size="xs"
+                color="red"
+                onClick={() => cancelDownload(repoId, file.rfilename)}
+              >
+                Cancel
+              </Button>
+            )}
+            {!isDone && !isDownloading && !hasError && (
+              <Button
+                size="xs"
+                leftSection={<IconDownload size={14} />}
+                disabled={!config?.models_dir}
+                title={
+                  config?.models_dir
+                    ? "Download to models directory"
+                    : "Set a models directory in Setup first"
+                }
+                onClick={() => startDownload(repoId, file.rfilename)}
+              >
+                Download
+              </Button>
+            )}
+            {hasError && (
+              <Button
+                size="xs"
+                leftSection={<IconRefresh size={14} />}
+                disabled={!config?.models_dir}
+                onClick={() => startDownload(repoId, file.rfilename)}
+              >
+                Retry
+              </Button>
+            )}
+          </Group>
+        </Group>
 
         {/* Progress bar */}
         {isDownloading && (
-          <div className="download-progress-bar-wrapper">
-            <div
-              className="download-progress-bar"
-              style={{ width: `${pct ?? 0}%` }}
+          <Box mt="xs">
+            <Progress
+              value={pct ?? 0}
+              size="sm"
+              radius="sm"
+              striped
+              animated
             />
-            <span className="download-progress-text">
+            <Text size="xs" c="dimmed" mt={4}>
               {formatBytes(prog!.bytes_downloaded)}
               {prog!.bytes_total ? ` / ${formatBytes(prog!.bytes_total)}` : ""}
               {pct != null ? ` (${pct}%)` : ""}
-            </span>
-          </div>
+            </Text>
+          </Box>
         )}
 
         {/* Error */}
         {hasError && (
-          <span className="download-error">{prog!.error}</span>
+          <Text size="sm" c="red" mt="xs">
+            {prog!.error}
+          </Text>
         )}
-
-        {/* Actions */}
-        <div className="gguf-file-actions">
-          {isDone && (
-            <>
-              <span className="download-done">✓ Downloaded</span>
-              {localPathFor(file.rfilename) && (
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() =>
-                    onSelectModel(localPathFor(file.rfilename)!)
-                  }
-                >
-                  Run this model
-                </button>
-              )}
-            </>
-          )}
-          {isDownloading && (
-            <button
-              className="btn btn-sm btn-danger"
-              onClick={() => cancelDownload(repoId, file.rfilename)}
-            >
-              Cancel
-            </button>
-          )}
-          {!isDone && !isDownloading && !hasError && (
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={!config?.models_dir}
-              title={
-                config?.models_dir
-                  ? "Download to models directory"
-                  : "Set a models directory in Setup first"
-              }
-              onClick={() => startDownload(repoId, file.rfilename)}
-            >
-              Download
-            </button>
-          )}
-          {hasError && (
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={!config?.models_dir}
-              onClick={() => startDownload(repoId, file.rfilename)}
-            >
-              Retry
-            </button>
-          )}
-        </div>
-      </div>
+      </Box>
     );
   }
 
@@ -364,110 +396,150 @@ export default function DownloadPage({
   const noModelsDir = !config?.models_dir;
 
   return (
-    <div className="page download-page">
-      <h2>Download Models</h2>
+    <Stack gap="md">
+      <Title order={2}>Download Models</Title>
 
       {noModelsDir && (
-        <div className="callout callout-warn">
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+        >
           Set a models directory in Setup before downloading.
-        </div>
+        </Alert>
       )}
 
       {/* Search */}
-      <div className="search-bar">
-        <input
-          type="text"
-          className="search-input"
-          placeholder="Search HuggingFace for GGUF models…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={searching}
-        />
-        <button
-          className="btn btn-primary"
-          onClick={doSearch}
-          disabled={searching || query.trim().length === 0}
-        >
-          {searching ? "Searching…" : "Search HuggingFace"}
-        </button>
-      </div>
+      <Grid align="flex-end" gutter="sm">
+        <Grid.Col span="auto">
+          <TextInput
+            label="Search HuggingFace"
+            placeholder="Search HuggingFace for GGUF models…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={searching}
+          />
+        </Grid.Col>
+        <Grid.Col span="content">
+          <Button
+            leftSection={<IconSearch size={16} />}
+            onClick={doSearch}
+            loading={searching}
+            disabled={query.trim().length === 0}
+          >
+            Search HuggingFace
+          </Button>
+        </Grid.Col>
+      </Grid>
 
       {/* Errors */}
       {searchError && (
-        <div className="callout callout-error">{searchError}</div>
+        <Alert color="red" variant="light" icon={<IconX size={16} />}>
+          {searchError}
+        </Alert>
       )}
 
       {/* Results */}
-      {results.length === 0 && !searching && !searchError && query.trim().length > 0 && (
-        <div className="empty-state">No results found.</div>
-      )}
+      {results.length === 0 &&
+        !searching &&
+        !searchError &&
+        query.trim().length > 0 && (
+          <Text c="dimmed">No results found.</Text>
+        )}
 
-      <div className="search-results">
+      <Stack gap="md">
         {results.map((repo) => {
           const isExpanded = expanded.has(repo.id);
           return (
-            <div key={repo.id} className="search-result-card">
-              <div
-                className="search-result-header"
+            <Card key={repo.id} withBorder>
+              <Card.Section
+                withBorder
+                inheritPadding
+                py="sm"
+                className={classes.clickable}
                 onClick={() => toggleExpand(repo.id)}
               >
-                <div className="repo-id-row">
-                  <button
-                    className="repo-id-link"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectRepo(repo.id);
-                    }}
-                    title="View model details"
-                  >
-                    {repo.id}
-                  </button>
-                  <span className="expand-toggle">
-                    {isExpanded ? "▾" : "▸"}
-                  </span>
-                </div>
+                <Stack gap="xs">
+                  <Group justify="space-between" wrap="nowrap">
+                    <Group gap="xs" wrap="nowrap">
+                      <Button
+                        variant="subtle"
+                        size="compact-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectRepo(repo.id);
+                        }}
+                        title="View model details"
+                      >
+                        <Text fw={600}>{repo.id}</Text>
+                      </Button>
+                      <Text c="dimmed">
+                        {isExpanded ? (
+                          <IconCaretDown size={16} />
+                        ) : (
+                          <IconCaretRight size={16} />
+                        )}
+                      </Text>
+                    </Group>
 
-                <div className="repo-meta">
-                  <span title="Downloads">↓ {repo.downloads.toLocaleString()}</span>
-                  <span title="Likes">♥ {repo.likes.toLocaleString()}</span>
-                  {repo.gated && tagBadge("Gated", "badge-warn")}
-                  {repo.private && tagBadge("Private", "badge-private")}
-                </div>
+                    <Group gap="sm" wrap="nowrap">
+                      <Text size="sm" c="dimmed" title="Downloads">
+                        <IconDownload size={14} />{" "}
+                        {repo.downloads.toLocaleString()}
+                      </Text>
+                      <Text size="sm" c="dimmed" title="Likes">
+                        <IconHeart size={14} /> {repo.likes.toLocaleString()}
+                      </Text>
+                      {repo.gated && (
+                        <Badge color="yellow" variant="light">
+                          Gated
+                        </Badge>
+                      )}
+                      {repo.private && (
+                        <Badge color="red" variant="light">
+                          Private
+                        </Badge>
+                      )}
+                    </Group>
+                  </Group>
 
-                <div className="repo-tags">
-                  {repo.tags.slice(0, 8).map((t) => (
-                    <span key={t} className="tag-badge badge-default">
-                      {t}
-                    </span>
-                  ))}
-                  {repo.tags.length > 8 && (
-                    <span className="tag-badge badge-muted">
-                      +{repo.tags.length - 8}
-                    </span>
-                  )}
-                </div>
+                  <Group gap="xs" wrap="wrap">
+                    {repo.tags.slice(0, 8).map((t) => (
+                      <Badge key={t} variant="default" size="sm">
+                        {t}
+                      </Badge>
+                    ))}
+                    {repo.tags.length > 8 && (
+                      <Badge variant="default" size="sm" color="gray">
+                        +{repo.tags.length - 8}
+                      </Badge>
+                    )}
+                  </Group>
 
-                <div className="repo-file-count">
-                  {repo.gguf_files.length} GGUF file
-                  {repo.gguf_files.length !== 1 ? "s" : ""}
-                </div>
-              </div>
+                  <Text size="sm" c="dimmed">
+                    {repo.gguf_files.length} GGUF file
+                    {repo.gguf_files.length !== 1 ? "s" : ""}
+                  </Text>
+                </Stack>
+              </Card.Section>
 
               {isExpanded && (
-                <div className="gguf-files-list">
+                <Card.Section inheritPadding py="sm">
                   {repo.gguf_files.length === 0 && (
-                    <div className="empty-state empty-state-sm">
+                    <Text c="dimmed" size="sm">
                       No GGUF files listed.
-                    </div>
+                    </Text>
                   )}
-                  {repo.gguf_files.map((file) => renderFile(repo.id, file))}
-                </div>
+                  <Stack gap={0}>
+                    {repo.gguf_files.map((file) => renderFile(repo.id, file))}
+                  </Stack>
+                </Card.Section>
               )}
-            </div>
+            </Card>
           );
         })}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   );
 }

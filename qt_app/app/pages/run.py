@@ -12,14 +12,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
     QDoubleSpinBox,
+    QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
     QInputDialog,
     QMessageBox,
-    QTabWidget,
     QToolButton,
 )
 
@@ -84,20 +86,96 @@ _GROUP_DISPLAY = {
 
 def _option_label(option: LlamaOption) -> str:
     """Build a label string with default and restart metadata."""
-    parts = [option.label, option.flag]
-    if option.default is not None:
-        parts.append(f"(default: {option.default.to_json()})")
-    if option.restart_required:
-        parts.append("[restart]")
+    parts: list[str] = []
+    if option.label:
+        parts.append(option.label)
+    if option.help_text:
+        parts.append("—")
+        parts.append(option.help_text)
     return " ".join(parts)
 
 
 def _schema_option_label(rt_opt: RuntimeOption) -> str:
     """Build a label string for a non-curated schema option."""
-    parts = [rt_opt.label, rt_opt.flag]
-    if rt_opt.default is not None:
-        parts.append(f"(default: {rt_opt.default})")
+    parts: list[str] = []
+    if rt_opt.label:
+        parts.append(rt_opt.label)
+    elif rt_opt.flag:
+        parts.append(rt_opt.flag)
     return " ".join(parts)
+
+
+class _WrappedTabs(QWidget):
+    """Tab widget whose tab bar wraps into multiple rows via FlowLayout.
+
+    Replaces QTabWidget to avoid the single-row overflow that drives
+    the container to thousands of pixels wide when scroll buttons are
+    disabled.
+
+    Provides the same interface used by the advanced-group code:
+    ``addTab``, ``count``, ``widget``, ``currentIndex``,
+    ``currentChanged`` signal, and ``tab_bar_height()``.
+    """
+
+    currentChanged = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._buttons: list[QPushButton] = []
+        self._pages: list[QWidget] = []
+        self._current_index = -1
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._tab_bar = QWidget(self)
+        self._tab_bar.setObjectName("WrappedTabBar")
+        self._tab_bar_layout = FlowLayout(self._tab_bar, hspacing=2, vspacing=0)
+        outer.addWidget(self._tab_bar)
+
+        self._stack = QStackedWidget(self)
+        self._stack.setObjectName("WrappedTabStack")
+        outer.addWidget(self._stack)
+
+    def addTab(self, page: QWidget, label: str) -> int:
+        idx = len(self._pages)
+        btn = QPushButton(label, self._tab_bar)
+        btn.setObjectName("WrappedTabBtn")
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda checked=False, i=idx: self.setCurrentIndex(i))
+        self._tab_bar_layout.addWidget(btn)
+        self._buttons.append(btn)
+        self._pages.append(page)
+        self._stack.addWidget(page)
+        if idx == 0:
+            self.setCurrentIndex(0)
+        return idx
+
+    def count(self) -> int:
+        return len(self._pages)
+
+    def widget(self, index: int) -> QWidget | None:
+        if 0 <= index < len(self._pages):
+            return self._pages[index]
+        return None
+
+    def currentIndex(self) -> int:
+        return self._current_index
+
+    def setCurrentIndex(self, index: int) -> None:
+        if index == self._current_index or not (0 <= index < len(self._pages)):
+            return
+        self._current_index = index
+        self._stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._buttons):
+            btn.setChecked(i == index)
+        self.currentChanged.emit(index)
+
+    def tab_bar_height(self) -> int:
+        """Return the current rendered height of the wrapped tab bar."""
+        return self._tab_bar.height()
 
 
 def _group_display(group: str) -> str:
@@ -242,11 +320,13 @@ class RunPage(PageBase):
         self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.model_combo.setMinimumContentsLength(22)
         self.model_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.profile_combo = QComboBox(hero)
         self.profile_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.profile_combo.setMinimumContentsLength(14)
         self.profile_combo.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.profile_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         self._model_label = QLabel("Model", hero)
         row.addWidget(self._model_label)
@@ -274,11 +354,13 @@ class RunPage(PageBase):
 
         # Wrapping action rows keep controls reachable in narrower windows.
         primary_actions_widget = QWidget(hero)
+        primary_actions_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         primary_actions = FlowLayout(primary_actions_widget, hspacing=8, vspacing=8)
         for widget in (start, self._stop_button, restart, switch):
             primary_actions.addWidget(widget)
 
         meta_actions_widget = QWidget(hero)
+        meta_actions_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._meta_actions_widget = meta_actions_widget
         meta_actions = FlowLayout(meta_actions_widget, hspacing=8, vspacing=8)
         for widget in (save, save_as, duplicate, reset, self.preset_combo, apply_preset, reset_defaults):
@@ -393,11 +475,11 @@ class RunPage(PageBase):
     def _build_advanced_groups(self) -> None:
         card = Card(self._body)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
         header_row = QWidget(card)
         header_layout = QHBoxLayout(header_row)
-        header_layout.setContentsMargins(16, 6, 16, 6)
+        header_layout.setContentsMargins(8, 2, 8, 2)
         header_layout.setSpacing(6)
         self._advanced_toggle_btn = QToolButton(header_row)
         self._advanced_toggle_btn.setText("Advanced groups")
@@ -408,9 +490,6 @@ class RunPage(PageBase):
         self._advanced_toggle_btn.setObjectName("AdvancedToggleBtn")
         self._advanced_toggle_btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._advanced_toggle_btn.setMaximumWidth(220)
-        # Search + filter pill: moved out of the body so they stay visible
-        # even when the panel is collapsed (so the user can find/filter
-        # options when re-opening).
         self.arg_search = QLineEdit(header_row)
         self.arg_search.setObjectName("ArgumentSearchBox")
         self.arg_search.setPlaceholderText("Search arguments…")
@@ -421,17 +500,14 @@ class RunPage(PageBase):
         header_layout.addWidget(self._advanced_toggle_btn)
         header_layout.addWidget(self.arg_search)
         header_layout.addWidget(self.arg_filter_changed)
-        # The body of the card (just the QTabWidget.)
+        # The body of the card — a wrapped-tab container whose tab bar
+        # flows into multiple rows instead of scrolling horizontally.
         self._advanced_body = QWidget(card)
         body_layout = QVBoxLayout(self._advanced_body)
-        body_layout.setContentsMargins(16, 0, 16, 14)
-        body_layout.setSpacing(8)
-        self._advanced_tabs = QTabWidget(self._advanced_body)
-        self._advanced_tabs.setUsesScrollButtons(True)
+        body_layout.setContentsMargins(12, 0, 12, 8)
+        body_layout.setSpacing(6)
+        self._advanced_tabs = _WrappedTabs(self._advanced_body)
         self._advanced_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        # When the tab changes, the QTabWidget's sizeHint changes. We hook
-        # a 1-shot QTimer so the sizeHint recompute happens after the
-        # QTabWidget actually updates its geometry.
         self._advanced_tabs.currentChanged.connect(self._refit_advanced_panel)
         self._option_cards.clear()
         handled = set(MAIN_OPTION_IDS)
@@ -441,11 +517,13 @@ class RunPage(PageBase):
             self._build_catalog_advanced(self._advanced_tabs, handled)
         body_layout.addWidget(self._advanced_tabs)
         self._advanced_body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        # Wire the toggle: clicked on the body (not the toolbar widgets
-        # inside the header) to expand/collapse.
+        # Wire the toggle: hide search/filter when collapsed so the header
+        # stays compact (just the toggle button).
         def _toggle_advanced(checked: bool) -> None:
             self._advanced_body.setVisible(checked)
             self._advanced_toggle_btn.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+            self.arg_search.setVisible(checked)
+            self.arg_filter_changed.setVisible(checked)
             self._refit_advanced_panel()
         self._advanced_toggle_btn.toggled.connect(_toggle_advanced)
         layout.addWidget(header_row)
@@ -468,11 +546,16 @@ class RunPage(PageBase):
                     return
                 card_layout = card.layout()
                 card_m = card_layout.contentsMargins()
-                header = card_layout.itemAt(0).widget()
-                header_h = header.height() if header else 0
-
+                header_item = card_layout.itemAt(0) if card_layout is not None else None
+                header = header_item.widget() if header_item else None
+                header_layout = header.layout() if header else None
+                if header_layout is not None:
+                    header_layout.activate()
+                header_h = header.minimumSizeHint().height() if header else 0
                 if not self._advanced_body.isVisible():
-                    # Collapsed: just header + card margins.
+                    # Collapsed: reset body constraints and size to header only.
+                    self._advanced_body.setMinimumHeight(0)
+                    self._advanced_body.setMaximumHeight(0)
                     card_h = header_h + card_m.top() + card_m.bottom()
                     card.setMinimumHeight(card_h)
                     card.setMaximumHeight(card_h)
@@ -486,18 +569,20 @@ class RunPage(PageBase):
                     return
 
                 # Ensure the page layout has settled at its current width.
-                inner_layout = page.layout()
+                content = page.widget() if isinstance(page, QScrollArea) else page
+                inner_layout = content.layout()
                 if inner_layout is not None:
                     inner_layout.activate()
 
-                # Height the active page needs to show all its content.
-                h = page.minimumSizeHint().height()
+                # Height the active page needs, capped so overflow scrolls.
+                h = content.minimumSizeHint().height()
                 if h < 80:
                     h = 80
+                if h > 400:
+                    h = 400
 
-                # Set every page: active gets its natural height,
-                # inactive are squashed to 0 so the QTabWidget ignores
-                # them when computing its own size.
+                # Set every page: active gets its calculated height,
+                # inactive are squashed to 0 so they don't affect sizing.
                 for i in range(self._advanced_tabs.count()):
                     p = self._advanced_tabs.widget(i)
                     if p is None:
@@ -509,8 +594,8 @@ class RunPage(PageBase):
                         p.setMinimumHeight(0)
                         p.setMaximumHeight(0)
 
-                # QTabWidget height = tab bar + active page.
-                tab_bar_h = self._advanced_tabs.tabBar().height()
+                # WrappedTabs height = tab bar + active page.
+                tab_bar_h = self._advanced_tabs.tab_bar_height()
                 tabs_h = tab_bar_h + h
 
                 # Body height = tabs widget + body layout margins.
@@ -533,12 +618,12 @@ class RunPage(PageBase):
             except Exception:
                 return
 
-        # Defer the recompute: the QTabWidget emits currentChanged BEFORE
-        # the new page's layout has been recomputed. QTimer.singleShot(0)
-        # schedules the call for after the current event.
+        # Defer the recompute: currentChanged fires BEFORE the new page's
+        # layout has been recomputed.  QTimer.singleShot(0) schedules the
+        # call for after the current event.
         QTimer.singleShot(0, _do)
 
-    def _build_schema_advanced(self, tabs: QTabWidget, handled: set[str]) -> None:
+    def _build_schema_advanced(self, tabs: _WrappedTabs, handled: set[str]) -> None:
         """Build advanced groups from the parsed runtime schema."""
         groups: dict[str, list[RuntimeOption]] = {}
         for rt_opt in self._schema.options:
@@ -576,7 +661,13 @@ class RunPage(PageBase):
             option_card.add_editor(widget)
             self._option_cards[extra.id] = option_card
             grid.addWidget(option_card, 0, 0)
-            tabs.addTab(tab_page, "Raw extra args")
+            scroll = QScrollArea(tabs)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(tab_page)
+            tabs.addTab(scroll, "Raw extra args")
 
         for group_name in group_order:
             options = groups.get(group_name, [])
@@ -620,9 +711,15 @@ class RunPage(PageBase):
                 self._option_cards[rt_opt.id] = option_card
                 row, col = divmod(idx, 2)
                 grid.addWidget(option_card, row, col)
-            tabs.addTab(tab_page, _group_display(group_name))
+            scroll = QScrollArea(tabs)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(tab_page)
+            tabs.addTab(scroll, _group_display(group_name))
 
-    def _build_catalog_advanced(self, tabs: QTabWidget, handled: set[str]) -> None:
+    def _build_catalog_advanced(self, tabs: _WrappedTabs, handled: set[str]) -> None:
         """Build advanced groups from the static catalog (fallback)."""
         for group in LLAMA_OPTION_CATALOG.groups_in_order():
             options = [o for o in LLAMA_OPTION_CATALOG.by_group(group) if o.id not in handled]
@@ -655,7 +752,13 @@ class RunPage(PageBase):
                 self._option_cards[option.id] = option_card
                 row, col = divmod(idx, 2)
                 grid.addWidget(option_card, row, col)
-            tabs.addTab(tab_page, _group_display(group))
+            scroll = QScrollArea(tabs)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(tab_page)
+            tabs.addTab(scroll, _group_display(group))
 
     def _build_logs(self) -> None:
         logs = Card(self._body)
@@ -1306,14 +1409,23 @@ class RunPage(PageBase):
 
     def _load_profile_into_form(self) -> None:
         profile = self._selected_profile()
+        config = self.config_store.load()
         for option_id, widget in self._editors.items():
             catalog_opt = LLAMA_OPTION_CATALOG.get(option_id)
             if catalog_opt is not None:
-                value = (
-                    profile.settings.get(option_id).to_json()
-                    if profile and profile.settings.get(option_id)
-                    else (catalog_opt.default.to_json() if catalog_opt.default else None)
-                )
+                # Priority: profile override > Settings default > catalog default
+                if profile and profile.settings.get(option_id):
+                    value = profile.settings.get(option_id).to_json()
+                elif option_id == "host":
+                    value = config.host
+                elif option_id == "port":
+                    value = config.port
+                elif config.global_settings.get(option_id):
+                    value = config.global_settings.get(option_id).to_json()
+                elif catalog_opt.default:
+                    value = catalog_opt.default.to_json()
+                else:
+                    value = None
                 self._set_editor_value(catalog_opt, widget, value)
             else:
                 self._load_unknown_editor(option_id, widget, profile)

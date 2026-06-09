@@ -6,6 +6,32 @@ import {
   onServerLog,
   onServerStarted,
 } from "../shared/tauriApi";
+import {
+  Card,
+  Stack,
+  Group,
+  Text,
+  Button,
+  Title,
+  Code,
+  Alert,
+  Badge,
+  Anchor,
+  CopyButton,
+  ScrollArea,
+  Box,
+  Table,
+} from "@mantine/core";
+import {
+  IconActivity,
+  IconPlayerStop,
+  IconRefresh,
+  IconTrash,
+  IconLink,
+  IconCopy,
+  IconTerminal,
+  IconX,
+} from "@tabler/icons-react";
 
 const MAX_LOG_LINES = 500;
 const HEALTH_POLL_INTERVAL_MS = 5000;
@@ -19,7 +45,7 @@ export default function StatusPage({ config }: StatusPageProps) {
   const [logs, setLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const logContainerRef = useRef<HTMLPreElement>(null);
+  const logViewportRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -85,7 +111,7 @@ export default function StatusPage({ config }: StatusPageProps) {
 
   // --- Auto-scroll logs to bottom ---
   useEffect(() => {
-    const el = logContainerRef.current;
+    const el = logViewportRef.current;
     if (!el || !autoScrollRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [logs]);
@@ -96,12 +122,15 @@ export default function StatusPage({ config }: StatusPageProps) {
   }, [refreshStatus]);
 
   // --- Detect manual scroll to pause/resume auto-scroll ---
-  const handleLogScroll = useCallback(() => {
-    const el = logContainerRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
-    autoScrollRef.current = atBottom;
-  }, []);
+  const handleLogScrollPosition = useCallback(
+    ({ y }: { x: number; y: number }) => {
+      const el = logViewportRef.current;
+      if (!el) return;
+      const atBottom = el.scrollHeight - y - el.clientHeight < 20;
+      autoScrollRef.current = atBottom;
+    },
+    []
+  );
 
   // --- Handlers ---
   const handleStop = useCallback(async () => {
@@ -131,137 +160,202 @@ export default function StatusPage({ config }: StatusPageProps) {
   const port = config?.port ?? 8080;
   const serverUrl = `http://${host}:${port}`;
 
-  // --- Health display label ---
+  // --- Health display ---
   let healthLabel: string;
-  let healthBadgeClass: string;
+  let healthColor: string;
   if (!running) {
     healthLabel = "Stopped";
-    healthBadgeClass = "badge badge-muted";
+    healthColor = "gray";
   } else if (health === "ok") {
     healthLabel = "Healthy";
-    healthBadgeClass = "badge badge-success";
+    healthColor = "green";
   } else if (health === "loading") {
     healthLabel = "Loading model…";
-    healthBadgeClass = "badge badge-warning";
+    healthColor = "yellow";
   } else if (health === "error") {
     healthLabel = "Error";
-    healthBadgeClass = "badge badge-error";
+    healthColor = "red";
   } else {
     // running but health is undefined/null — unreachable or not yet polled
     healthLabel = "Unreachable";
-    healthBadgeClass = "badge badge-warning";
+    healthColor = "yellow";
   }
 
   return (
-    <div className="page status-page">
-      <h2>Server Status</h2>
+    <Stack gap="md">
+      <Group gap="xs" align="center">
+        <IconActivity size={24} />
+        <Title order={2}>Server Status</Title>
+      </Group>
 
-      {error && <div className="callout callout-error">{error}</div>}
+      {error && (
+        <Alert color="red" variant="light" icon={<IconX size={16} />}>
+          {error}
+        </Alert>
+      )}
 
       {/* --- Status overview --- */}
-      <section className="card">
-        <div className="card-body">
-          <div className="status-row">
-            <span className="status-label">State:</span>
-            <span
-              className={`badge ${running ? "badge-success" : "badge-muted"}`}
-            >
-              {running ? "Running" : "Stopped"}
-            </span>
-          </div>
+      <Card withBorder>
+        <Table highlightOnHover withTableBorder={false} layout="fixed">
+          <Table.Tbody>
+            <Table.Tr>
+              <Table.Th w="120">State</Table.Th>
+              <Table.Td>
+                <Badge color={running ? "green" : "gray"} variant="light">
+                  {running ? "Running" : "Stopped"}
+                </Badge>
+              </Table.Td>
+            </Table.Tr>
 
-          <div className="status-row">
-            <span className="status-label">PID:</span>
-            <span className="status-value mono">
-              {pid != null ? pid : "—"}
-            </span>
-          </div>
+            <Table.Tr>
+              <Table.Th>PID</Table.Th>
+              <Table.Td>
+                <Code>{pid != null ? pid : "—"}</Code>
+              </Table.Td>
+            </Table.Tr>
 
-          <div className="status-row">
-            <span className="status-label">Started:</span>
-            <span className="status-value">
-              {startedAt ? new Date(startedAt).toLocaleString() : "—"}
-            </span>
-          </div>
+            <Table.Tr>
+              <Table.Th>Started</Table.Th>
+              <Table.Td>
+                <Text>{startedAt ? new Date(startedAt).toLocaleString() : "—"}</Text>
+              </Table.Td>
+            </Table.Tr>
 
-          <div className="status-row">
-            <span className="status-label">Health:</span>
-            <span className={healthBadgeClass}>{healthLabel}</span>
-          </div>
+            <Table.Tr>
+              <Table.Th>Health</Table.Th>
+              <Table.Td>
+                <Badge color={healthColor} variant="light">
+                  {healthLabel}
+                </Badge>
+              </Table.Td>
+            </Table.Tr>
 
-          {running && (
-            <div className="status-row">
-              <span className="status-label">Web UI:</span>
-              <a href={serverUrl} target="_blank" rel="noopener noreferrer">
-                {serverUrl}
-              </a>
-            </div>
-          )}
-        </div>
-      </section>
+            {running && (
+              <Table.Tr>
+                <Table.Th>Web UI</Table.Th>
+                <Table.Td>
+                  <Group gap="xs" align="center" wrap="nowrap">
+                    <IconLink size={14} />
+                    <Anchor
+                      href={serverUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="sm"
+                    >
+                      {serverUrl}
+                    </Anchor>
+                    <CopyButton value={serverUrl}>
+                      {({ copied, copy }) => (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          leftSection={<IconCopy size={14} />}
+                          onClick={copy}
+                          color={copied ? "teal" : "blue"}
+                        >
+                          {copied ? "Copied" : "Copy"}
+                        </Button>
+                      )}
+                    </CopyButton>
+                  </Group>
+                </Table.Td>
+              </Table.Tr>
+            )}
+          </Table.Tbody>
+        </Table>
+      </Card>
 
       {/* --- Controls (no Start: the user starts the server from the Run page) --- */}
-      <section className="flex-row" style={{ gap: 12, marginBottom: 16 }}>
+      <Group gap="sm" align="center" wrap="wrap">
         {running && (
-          <button
-            className="danger"
+          <Button
+            color="red"
+            leftSection={<IconPlayerStop size={16} />}
             onClick={handleStop}
-            disabled={loading}
+            loading={loading}
           >
-            {loading ? "Stopping…" : "Stop Server"}
-          </button>
+            Stop Server
+          </Button>
         )}
-        <button
-          className="secondary"
+        <Button
+          variant="default"
+          leftSection={<IconRefresh size={16} />}
           onClick={refreshStatus}
-          disabled={loading}
+          loading={loading}
         >
           Refresh
-        </button>
+        </Button>
         {!running && (
-          <span className="hint">
-            To start a model, go to the <strong>Run</strong> page and pick a
-            model.
-          </span>
+          <Text size="sm" c="dimmed">
+            To start a model, go to the <Text span fw={700}>Run</Text> page and
+            pick a model.
+          </Text>
         )}
-      </section>
+      </Group>
 
       {/* --- Generated command --- */}
       {command && (
-        <section className="card">
-          <header className="card-header">
-            <h3>Generated Command</h3>
-          </header>
-          <div className="card-body">
-            <pre className="command-preview mono">{command}</pre>
-          </div>
-        </section>
+        <Card withBorder>
+          <Card.Section withBorder inheritPadding py="xs">
+            <Title order={3} size="h5">
+              Generated Command
+            </Title>
+          </Card.Section>
+          <Stack gap="sm" mt="sm">
+            <Code block>{command}</Code>
+            <Group justify="flex-end">
+              <CopyButton value={command}>
+                {({ copied, copy }) => (
+                  <Button
+                    variant="subtle"
+                    size="compact-sm"
+                    leftSection={<IconCopy size={16} />}
+                    onClick={copy}
+                    color={copied ? "teal" : "blue"}
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
+                )}
+              </CopyButton>
+            </Group>
+          </Stack>
+        </Card>
       )}
 
       {/* --- Logs --- */}
-      <section className="card">
-        <div className="card-header flex-row" style={{ justifyContent: "space-between" }}>
-          <h3>Logs</h3>
-          <button className="secondary btn-sm" onClick={handleClearLogs}>
-            Clear
-          </button>
-        </div>
-        <div className="card-body">
-          <pre
-            className="log-viewer"
-            ref={logContainerRef}
-            onScroll={handleLogScroll}
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs">
+          <Group justify="space-between" align="center">
+            <Group gap="xs" align="center">
+              <IconTerminal size={16} />
+              <Title order={3} size="h5">
+                Logs
+              </Title>
+            </Group>
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              leftSection={<IconTrash size={16} />}
+              onClick={handleClearLogs}
+            >
+              Clear
+            </Button>
+          </Group>
+        </Card.Section>
+        <Box mt="sm">
+          <ScrollArea
+            h={300}
+            viewportRef={logViewportRef}
+            onScrollPositionChange={handleLogScrollPosition}
           >
-            {logs.length === 0
-              ? "(no logs yet)"
-              : logs.map((line, i) => (
-                  <div key={i} className="log-line">
-                    {line}
-                  </div>
-                ))}
-          </pre>
-        </div>
-      </section>
-    </div>
+            <Code block>
+              {logs.length === 0
+                ? "(no logs yet)"
+                : logs.join("\n")}
+            </Code>
+          </ScrollArea>
+        </Box>
+      </Card>
+    </Stack>
   );
 }

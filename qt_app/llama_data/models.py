@@ -36,7 +36,7 @@ class HfTokenSource:
 class AppConfig:
     llama_server_path: Optional[str] = None
     models_dir: Optional[str] = None
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8080
     hf_token_source: HfTokenSource = field(default_factory=HfTokenSource)
     global_settings: SettingValueMap = field(default_factory=SettingValueMap)
