@@ -7,17 +7,44 @@ This project started as a Tauri app, but WebKitGTK crashes on Wayland with NVIDI
 ## What it does
 
 ### Library
+
+<p align="center"><img src="screenshots/LibrarySS.png" width="700"></p>
+
 Scan a directory of GGUF files. The scanner distinguishes **primary runnable models** from **companion files** (mmproj, text-encoder, vision-encoder, embedding GGUFs) and links them together. Each model gets a card showing its quant, size, and hardware-fit estimate based on your detected RAM / VRAM. Browse the model's HuggingFace page or reveal the file in your file manager.
 
 ### Discover
-Search HuggingFace for GGUF models. Results show quant variants, split-set detection (multi-part GGUFs), and a hardware-fit score. Download directly — the download manager runs up to 3 files concurrently, each with its own progress row and cancel button. Interrupted downloads resume via HTTP Range. Model cards are cached locally for offline reading.
+
+<p align="center"><img src="screenshots/DiscoverSS.png" width="700"></p>
+
+Search HuggingFace for GGUF models. Results show quant variants, split-set detection (multi-part GGUFs), and a hardware-fit score.
+
+<p align="center"><img src="screenshots/DiscoverModelSelectionSS.png" width="700"></p>
+
+Select a model to see its details, quant variants, and hardware-fit estimate for your system.
+
+<p align="center"><img src="screenshots/DiscoverDownloadSS.png" width="700"></p>
+
+Download directly — the download manager runs up to 3 files concurrently, each with its own progress row and cancel button. Interrupted downloads resume via HTTP Range. Model cards are cached locally for offline reading.
 
 ### Run
+
 The control center. Two modes:
 
-**Single Model** — Pick a model, configure launch arguments through a form UI that mirrors `llama-server --help` (auto-parsed from your binary), save per-model profiles with presets like "Conservative CPU" or "Balanced GPU", start/stop/restart with live logs and command preview.
+#### Single Model
 
-**Router Mode** — Serve all models from your library via llama-server's native router. The app auto-generates a `--models-preset` INI from your saved profiles, so each model gets its own context size, GPU layers, mmproj, and other settings. Companion GGUFs are automatically excluded. A loaded models panel shows what's in VRAM with unload buttons. Set max loaded models to control VRAM usage with LRU eviction.
+<p align="center"><img src="screenshots/RunSingleSS.png" width="700"></p>
+
+Pick a model, configure launch arguments through a form UI that mirrors `llama-server --help` (auto-parsed from your binary), save per-model profiles with presets like "Conservative CPU" or "Balanced GPU", start/stop/restart with live logs and command preview.
+
+<p align="center"><img src="screenshots/RunAdvanceArgsSS.png" width="700"></p>
+
+The advanced arguments panel organises every llama-server flag into searchable, tabbed groups. Expand only the sections you need.
+
+#### Router Mode
+
+<p align="center"><img src="screenshots/RunRouterSS.png" width="700"></p>
+
+Serve all models from your library via llama-server's native router. The app auto-generates a `--models-preset` INI from your saved profiles, so each model gets its own context size, GPU layers, mmproj, and other settings. Companion GGUFs are automatically excluded. A loaded models panel shows what's in VRAM with unload buttons. Set max loaded models to control VRAM usage with LRU eviction.
 
 Additional features:
 - **Server re-attach**: If llama-server is already running when you open the app, it attaches to the existing process for stop/restart control — no orphaned servers.
@@ -26,6 +53,9 @@ Additional features:
 - **Live logs**: Auto-tail scrolling with stdout/stderr filtering and search.
 
 ### Settings
+
+<p align="center"><img src="screenshots/SettingsSS.png" width="700"></p>
+
 - Point to your `llama-server` binary.
 - Set the models download directory.
 - Configure bind host and port (defaults to `0.0.0.0:8080` for LAN access).
@@ -34,6 +64,9 @@ Additional features:
 - Global defaults for all llama-server options.
 
 ### Diagnostics
+
+<p align="center"><img src="screenshots/DiagnoseSS.png" width="700"></p>
+
 Quick health check: Qt platform plugin, llama-server binary presence/version, HuggingFace API reachability, GPU detection (NVIDIA via `nvidia-smi`).
 
 ## Architecture
@@ -109,6 +142,7 @@ llamUI/
 │   ├── icons/              # App icon at 9 sizes (16px–512px)
 │   ├── tests/              # Smoke tests (no pytest needed)
 │   └── main.py             # Entry point (handles all invocation styles)
+├── screenshots/            # App screenshots for documentation
 ├── plans/                  # Architecture decision records
 ├── pyproject.toml          # pip-installable package definition
 ├── install.sh              # Cross-platform installer (Linux/macOS)
