@@ -12,7 +12,7 @@ Reusable, theme-aware UI primitives and shell chrome for the LlamUI Qt applicati
 | `flow.py` | `FlowLayout` — a custom `QLayout` that flows child widgets left-to-right with wrapping. |
 | `header.py` | `Header` — a static top bar showing page title and optional subtitle. |
 | `inspector.py` | `Inspector` — a right-side panel with collapse/expand toggle and a thin `_CollapsedStrip` fallback. |
-| `sidebar.py` | `Sidebar` — a left navigation rail mapping `NavItemId` enum values to selectable buttons. |
+| `sidebar.py` | `Sidebar` — a left navigation rail mapping `NavItemId` enum values to selectable buttons, with collapse/expand support, SVG icons in collapsed mode, a `collapse_changed` signal, and lazy icon loading via `_nav_icons()`. |
 | `slider_spin.py` | `SliderSpinBox` / `SliderDoubleSpinBox` — composite widgets pairing a `QSlider` with a spinbox sharing one value. |
 | `__init__.py` | Public API surface; re-exports the widget set used by pages. |
 
@@ -28,10 +28,13 @@ Reusable, theme-aware UI primitives and shell chrome for the LlamUI Qt applicati
 
 **Enum-based navigation contract.** `NavItemId(str, Enum)` provides stable string keys (`library`, `discover`, `run`, `settings`, `diagnostics`) decoupling the sidebar from page classes. The sidebar emits `navigated(NavItemId)`; pages or a central router react without importing each other.
 
+**Lazy resource loading.** `Sidebar._nav_icons()` defers SVG icon creation until a `QApplication` exists, so collapsed-mode nav icons are available without constructing Qt resources at import time.
+
 ## Data & Control Flow
 
 **Signals (outward flow)**
 - `Sidebar.navigated(NavItemId)` — emitted when a nav button is clicked. Callers call `set_active(id)` to sync the UI check state.
+- `Sidebar.collapse_changed(bool)` — emitted when the navigation rail collapses or expands.
 - `Inspector.toggled(bool)` — emitted on collapse/expand. `_CollapsedStrip` is shown/hidden as a side effect.
 - `CollapsibleGroup.toggled(bool)` — emitted when the header strip is clicked.
 - `SliderSpinBox.valueChanged(int)` / `SliderDoubleSpinBox.valueChanged(float)` — single canonical value change for the composite.
@@ -63,7 +66,7 @@ Reusable, theme-aware UI primitives and shell chrome for the LlamUI Qt applicati
 - `Inspector.update_details` and `Sidebar.update_details` are called by pages (e.g. Run page) to reflect runtime state without the widgets owning that state.
 
 **Main window (`app.main_window`)**
-- `Sidebar` and `Inspector` are owned by `MainWindow` as persistent chrome; the sidebar’s `navigated` signal is connected to the main window’s page-switching slot.
+- `Sidebar` and `Inspector` are owned by `MainWindow` as persistent chrome; the sidebar’s `navigated` signal is connected to the main window’s page-switching slot, and `collapse_changed` lets the shell adjust splitter sizes and persist collapsed state.
 - `Inspector.toggled` can be connected to the main window to adjust the central widget width or save the panel state.
 
 **No upstream service dependencies.**

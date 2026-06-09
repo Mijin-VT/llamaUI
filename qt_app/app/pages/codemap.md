@@ -11,7 +11,7 @@ This package contains the full-screen **page widgets** that populate the central
 | `library.py` | `LibraryPage` | Local GGUF inventory: model picker, detail card, metadata badges, hardware-fit tags, profile buttons. |
 | `discover.py` | `DiscoverPage` | Hugging Face search, repo file selection, split-set grouping, download queue with live progress. |
 | `settings.py` | `SettingsPage` | Application configuration: binary path, models directory, host/port, router mode, global defaults, HF token. |
-| `run.py` | `RunPage` | llama-server lifecycle (start / stop / restart), schema-driven option editors, profile CRUD, log streaming, router mode. |
+| `run.py` | `RunPage` | llama-server lifecycle (start / stop / restart), schema-driven option editors, profile CRUD, log streaming, router mode, and advanced option groups rendered with `_WrappedTabs` (FlowLayout buttons + `QStackedWidget`) for multi-row tab wrapping. |
 | `diagnostics.py` | `DiagnosticsPage` | Framework diagnostics, binary introspection, Hugging Face connectivity probe. |
 | `placeholders.py` | `PlaceholderPage` | Generic placeholder card for pages not yet implemented. |
 | `placeholders.py` | `RunPlaceholderPage` | Early Run page shell used before `RunPage` was wired. |
@@ -44,6 +44,8 @@ Pages accept store instances (`ConfigStore`, `LibraryStore`, `ProfileStore`) as 
 2. Runtime `RuntimeSchema` parsed from the actual `llama-server --help` output.
 
 Editors are created by `_make_editor(catalog_option)` and `_make_schema_editor(runtime_option)`, producing typed widgets (`QCheckBox`, `QSpinBox`, `QDoubleSpinBox`, `QComboBox`, `QLineEdit`, `SliderSpinBox`, `SliderDoubleSpinBox`).
+
+Advanced option groups use `_WrappedTabs` (FlowLayout tab buttons + `QStackedWidget`) instead of `QTabWidget` so tabs wrap across multiple rows at narrow widths.
 
 ### Two-Mode Runtime (`RunPage`)
 `RunPage` supports **Single Model** mode (one model + one profile) and **Router** mode (`--models-dir` serving all local models). Mode switches hide/show entire cards (`_main_settings_card`, `_advanced_card`, `_router_panel`) and stop a running server before reconfiguring.
