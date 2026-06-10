@@ -282,21 +282,40 @@ class DashboardPage(PageBase):
         self._layout.addWidget(logs)
 
     def _poll(self) -> None:
-        started = time.perf_counter()
-        status, client = self._monitor_status_and_client()
-        api = status.api_status
-        props: ApiStatus | None = None
-        runtime_metrics: RuntimeMetrics | None = None
-        router_models: list[dict] = []
-        slot_rows: list[dict] = []
         config = self._config_store.load()
-        if api and api.reachable and client and not (config.router_mode and not config.remote_monitor_enabled):
-            router_models = client.list_loaded_models()
-            loaded_id = self._loaded_model_id(router_models)
-            props = client.fetch_props(model=loaded_id)
-            runtime_metrics = client.fetch_metrics(model=loaded_id)
-            slot_rows = client.fetch_slots(model=loaded_id)
-        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if config.router_mode and not config.remote_monitor_enabled:
+            # Absolute guard: local router mode must not perform any HTTP
+            # monitoring from Dashboard.  Observe controller state/logs only.
+            status = self._controller.status if self._controller else RuntimeStatus(
+                state=ServerState.STOPPED,
+                host=config.host,
+                port=config.port,
+                model_path=None,
+                api_status=None,
+            )
+            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                status.api_status = ApiStatus(reachable=True, health="router")
+            api = status.api_status
+            props: ApiStatus | None = None
+            runtime_metrics: RuntimeMetrics | None = None
+            router_models: list[dict] = []
+            slot_rows: list[dict] = []
+            elapsed_ms = 0.0
+        else:
+            started = time.perf_counter()
+            status, client = self._monitor_status_and_client()
+            api = status.api_status
+            props = None
+            runtime_metrics = None
+            router_models = []
+            slot_rows = []
+            if api and api.reachable and client:
+                router_models = client.list_loaded_models()
+                loaded_id = self._loaded_model_id(router_models)
+                props = client.fetch_props(model=loaded_id)
+                runtime_metrics = client.fetch_metrics(model=loaded_id)
+                slot_rows = client.fetch_slots(model=loaded_id)
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
 
         now = time.time()
         log_lines = self._controller.log_buffer.lines() if self._controller else []
