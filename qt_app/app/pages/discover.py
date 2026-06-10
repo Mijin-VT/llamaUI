@@ -34,6 +34,18 @@ def _size(size: int | None) -> str:
         idx += 1
     return f"{value:.1f} {units[idx]}" if idx else f"{int(value)} B"
 
+class _SortItem(QTableWidgetItem):
+    def __init__(self, text: str, sort_value: object, row_key: int):
+        super().__init__(text)
+        self._sort_value = sort_value
+        self.setData(Qt.ItemDataRole.UserRole, row_key)
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if isinstance(other, _SortItem):
+            return self._sort_value < other._sort_value
+        return super().__lt__(other)
+
+
 
 # ---------------------------------------------------------------------------
 # Split-set grouping
@@ -216,6 +228,7 @@ class DiscoverPage(PageBase):
         layout.addWidget(self.status)
 
         self.results = QTableWidget(0, 7, search_card)
+        self.results.setSortingEnabled(True)
         self.results.setHorizontalHeaderLabels(["Repo", "Author", "Downloads", "Likes", "Best fit", "Files", "Smallest"])
         header = self.results.horizontalHeader()
         header.setStretchLastSection(False)
@@ -263,6 +276,7 @@ class DiscoverPage(PageBase):
         d.addWidget(self.split_warning)
 
         self.quant_fit_table = QTableWidget(0, 7, detail)
+        self.quant_fit_table.setSortingEnabled(True)
         self.quant_fit_table.setHorizontalHeaderLabels(["Quant", "Size", "Fit", "16K", "32K", "64K", "128K"])
         quant_header = self.quant_fit_table.horizontalHeader()
         quant_header.setStretchLastSection(False)
@@ -368,16 +382,30 @@ class DiscoverPage(PageBase):
             key=lambda repo: (repo.hardware_fit.score if repo.hardware_fit else 0, repo.downloads, repo.likes),
             reverse=True,
         )
+        self.results.setSortingEnabled(False)
         self.results.setRowCount(len(self._repos))
         for row, repo in enumerate(self._repos):
             sizes = [f.size_bytes for f in repo.files if f.size_bytes]
-            smallest = _size(min(sizes)) if sizes else "—"
+            smallest_size = min(sizes) if sizes else 0
+            smallest = _size(smallest_size) if smallest_size else "—"
             fit = repo.hardware_fit.summary() if repo.hardware_fit else "—"
-            for col, value in enumerate([repo.repo_id, repo.author, str(repo.downloads), str(repo.likes), fit, str(len(repo.files)), smallest]):
-                item = QTableWidgetItem(value)
+            fit_score = repo.hardware_fit.score if repo.hardware_fit else 0
+            values = [
+                (repo.repo_id, repo.repo_id.lower()),
+                (repo.author, repo.author.lower()),
+                (str(repo.downloads), repo.downloads),
+                (str(repo.likes), repo.likes),
+                (fit, fit_score),
+                (str(len(repo.files)), len(repo.files)),
+                (smallest, smallest_size),
+            ]
+            for col, (value, sort_value) in enumerate(values):
+                item = _SortItem(value, sort_value, row)
                 if col == 4 and repo.hardware_fit:
                     item.setToolTip(repo.hardware_fit.detail())
                 self.results.setItem(row, col, item)
+        self.results.setSortingEnabled(True)
+        self.results.sortByColumn(4, Qt.SortOrder.DescendingOrder)
         self.status.setText(f"Found {len(self._repos)} GGUF repos, ranked by hardware fit.")
         if self._repos:
             self.results.selectRow(0)
@@ -386,9 +414,11 @@ class DiscoverPage(PageBase):
 
     def _select_repo(self) -> None:
         row = self.results.currentRow()
-        if row < 0 or row >= len(self._repos):
+        item = self.results.item(row, 0) if row >= 0 else None
+        repo_index = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not isinstance(repo_index, int) or repo_index < 0 or repo_index >= len(self._repos):
             return
-        repo = self._repos[row]
+        repo = self._repos[repo_index]
         self._selected_repo = repo
 
         self._selectable = _build_selectable(repo)
@@ -438,6 +468,7 @@ class DiscoverPage(PageBase):
     def _refresh_quant_fit_table(self) -> None:
         repo = self._selected_repo
         self._syncing_quant_table = True
+        self.quant_fit_table.setSortingEnabled(False)
         self.quant_fit_table.setRowCount(0)
         if repo is None:
             self._syncing_quant_table = False
@@ -446,17 +477,24 @@ class DiscoverPage(PageBase):
         for row, entry in enumerate(self._selectable):
             selected_files = [repo.files[i] for i in entry.indices]
             fit = compute_hardware_fit(selected_files)
+            contexts = fit.contexts if fit else ()
             values = [
-                entry.quant or "—",
-                _size(entry.total_size),
-                fit.summary() if fit else "—",
-                *self._context_columns(fit),
+                (entry.quant or "—", entry.quant or ""),
+                (_size(entry.total_size), entry.total_size),
+                (fit.summary() if fit else "—", fit.score if fit else 0),
+                *[
+                    (f"{ctx.tier} · {_size(ctx.required_bytes)}", ctx.required_bytes)
+                    for ctx in contexts
+                ],
             ]
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
+            while len(values) < 7:
+                values.append(("—", 0))
+            for col, (value, sort_value) in enumerate(values):
+                item = _SortItem(value, sort_value, row)
                 if fit:
                     item.setToolTip(fit.detail())
                 self.quant_fit_table.setItem(row, col, item)
+        self.quant_fit_table.setSortingEnabled(True)
         self.quant_fit_table.resizeRowsToContents()
         self._syncing_quant_table = False
         self._select_quant_fit_row(self.file_combo.currentIndex())
@@ -466,19 +504,25 @@ class DiscoverPage(PageBase):
             return ["—", "—", "—", "—"]
         return [f"{ctx.tier} · {_size(ctx.required_bytes)}" for ctx in fit.contexts]
 
-    def _select_quant_fit_row(self, row: int) -> None:
-        if row < 0 or row >= self.quant_fit_table.rowCount():
+    def _select_quant_fit_row(self, selectable_index: int) -> None:
+        if selectable_index < 0:
             return
-        self._syncing_quant_table = True
-        self.quant_fit_table.selectRow(row)
-        self._syncing_quant_table = False
+        for row in range(self.quant_fit_table.rowCount()):
+            item = self.quant_fit_table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == selectable_index:
+                self._syncing_quant_table = True
+                self.quant_fit_table.selectRow(row)
+                self._syncing_quant_table = False
+                return
 
     def _on_quant_table_selection(self) -> None:
         if self._syncing_quant_table:
             return
         row = self.quant_fit_table.currentRow()
-        if row >= 0 and row != self.file_combo.currentIndex():
-            self.file_combo.setCurrentIndex(row)
+        item = self.quant_fit_table.item(row, 0) if row >= 0 else None
+        selectable_index = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if isinstance(selectable_index, int) and selectable_index != self.file_combo.currentIndex():
+            self.file_combo.setCurrentIndex(selectable_index)
 
     def _on_file_changed(self, index: int) -> None:
         """Update download button and split warning when the combo selection changes."""
