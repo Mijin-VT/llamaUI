@@ -26,7 +26,7 @@ from llama_data.stores import ConfigStore
 
 from .. import theme
 from ..services.runtime import LlamaServerController, LogLine, RuntimeStatus, ServerState
-from ..services.runtime_api import ApiStatus, LlamaServerApiClient, RuntimeMetrics
+from ..services.runtime_api import ApiStatus, RuntimeMetrics
 from ..widgets.buttons import SecondaryButton
 from ..widgets.cards import Card, CardTitle, Chip, FieldTile
 from .base import PageBase, PagePolicy
@@ -283,39 +283,9 @@ class DashboardPage(PageBase):
 
     def _poll(self) -> None:
         config = self._config_store.load()
-        if config.router_mode and not config.remote_monitor_enabled:
-            # Absolute guard: local router mode must not perform any HTTP
-            # monitoring from Dashboard.  Observe controller state/logs only.
-            status = self._controller.status if self._controller else RuntimeStatus(
-                state=ServerState.STOPPED,
-                host=config.host,
-                port=config.port,
-                model_path=None,
-                api_status=None,
-            )
-            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-                status.api_status = ApiStatus(reachable=True, health="router")
-            api = status.api_status
-            props: ApiStatus | None = None
-            runtime_metrics: RuntimeMetrics | None = None
-            router_models: list[dict] = []
-            slot_rows: list[dict] = []
-            elapsed_ms = 0.0
-        else:
-            started = time.perf_counter()
-            status, client = self._monitor_status_and_client()
-            api = status.api_status
-            props = None
-            runtime_metrics = None
-            router_models = []
-            slot_rows = []
-            if api and api.reachable and client:
-                router_models = client.list_loaded_models()
-                loaded_id = self._loaded_model_id(router_models)
-                props = client.fetch_props(model=loaded_id)
-                runtime_metrics = client.fetch_metrics(model=loaded_id)
-                slot_rows = client.fetch_slots(model=loaded_id)
-            elapsed_ms = (time.perf_counter() - started) * 1000.0
+        status, runtime_metrics = self._monitor_status_and_metrics()
+        elapsed_ms = 0.0
+        api = status.api_status
 
         now = time.time()
         log_lines = self._controller.log_buffer.lines() if self._controller else []
@@ -341,29 +311,21 @@ class DashboardPage(PageBase):
             "tokens_predicted_total",
             "tokens_predicted",
         )
-        # Fallback: extract token counts from slot rows when /metrics is unavailable
-        if not prompt_tokens and slot_rows:
-            prompt_tokens = float(sum(s.get("n_prompt_tokens_processed", 0) or 0 for s in slot_rows if isinstance(s, dict)))
-        if not generated_tokens and slot_rows:
-            generated_tokens = float(sum(
-                (s.get("n_tokens") or s.get("n_decoded") or 0)
-                for s in slot_rows if isinstance(s, dict)
-            ))
         prompt_tps, generation_tps = self._token_rates(now, prompt_tokens, generated_tokens)
         log_prompt_tps, log_generation_tps = self._log_token_rates(log_lines)
         if prompt_tps <= 0.0:
             prompt_tps = log_prompt_tps
         if generation_tps <= 0.0:
             generation_tps = log_generation_tps
-        active_slots, total_slots = self._slot_counts(api, props, runtime_metrics, slot_rows, log_lines)
+        active_slots, total_slots = self._slot_counts(api, runtime_metrics, log_lines)
 
-        self._update_status(status, props, router_models, active_slots, total_slots, prompt_tokens, generated_tokens)
+        self._update_status(status, active_slots, total_slots, prompt_tokens, generated_tokens)
 
         metric = {
             "timestamp": now,
             "reachable": bool(api and api.reachable),
             "health": api.health if api else None,
-            "latency_ms": elapsed_ms if api and api.reachable else 0.0,
+            "latency_ms": elapsed_ms,
             "tokens_per_second": self._smooth_tps(prompt_tps + generation_tps, now),
             "prompt_tokens_per_second": prompt_tps,
             "generation_tokens_per_second": generation_tps,
@@ -379,23 +341,20 @@ class DashboardPage(PageBase):
 
         self._render_logs()
 
+
     def _refresh(self) -> None:
         self._poll()
 
     def _update_status(
         self,
         status,
-        props: ApiStatus | None = None,
-        router_models: list[dict] | None = None,
         active_slots: int = 0,
         total_slots: int | None = None,
         prompt_tokens: float = 0.0,
         generated_tokens: float = 0.0,
     ) -> None:
         self._set_state_chip(status.state)
-        api = props if props and props.reachable else status.api_status
-        models = router_models or []
-        model_name = self._current_model_name(models, api.model_path if api else None, status.model_path)
+        model_name = self._current_model_name(None, None, status.model_path)
         self._model_tile.set_value(model_name)
         self._host_tile.set_value(f"{status.host}:{status.port}")
         self._pid_tile.set_value(str(status.pid) if status.pid is not None else "—")
@@ -405,15 +364,9 @@ class DashboardPage(PageBase):
         self._generated_tile.set_value(f"{int(generated_tokens):,}" if generated_tokens else "—")
         total_tokens = prompt_tokens + generated_tokens
         self._total_tokens_tile.set_value(f"{int(total_tokens):,}" if total_tokens else "—")
-        loaded = self._find_loaded_model(models)
-        meta = self._model_meta(loaded)
-        n_params = meta.get("n_params")
-        self._params_tile.set_value(f"{n_params / 1e9:.1f}B" if isinstance(n_params, (int, float)) and n_params else "—")
-        n_ctx = meta.get("n_ctx")
-        self._ctx_tile.set_value(f"{n_ctx:,}" if isinstance(n_ctx, (int, float)) and n_ctx else "—")
-        model_size = meta.get("size")
-        self._size_tile.set_value(f"{model_size / 1e9:.1f} GB" if isinstance(model_size, (int, float)) and model_size else "—")
-
+        self._params_tile.set_value("—")
+        self._ctx_tile.set_value("—")
+        self._size_tile.set_value("—")
     def _set_state_chip(self, state: ServerState) -> None:
         text = state.value.title()
         self._state_chip.setText(text)
@@ -479,9 +432,7 @@ class DashboardPage(PageBase):
     def _slot_counts(
         self,
         api: ApiStatus | None,
-        props: ApiStatus | None,
         runtime_metrics: RuntimeMetrics | None,
-        slot_rows: list[dict] | None = None,
         log_lines: list[LogLine] | None = None,
     ) -> tuple[int, int | None]:
         total = self._metric_counter(
@@ -490,13 +441,6 @@ class DashboardPage(PageBase):
             "slots_total",
             "llama_slots_total",
         )
-        if not total:
-            for status in (props, api):
-                if status and status.total_slots:
-                    total = float(status.total_slots)
-                    break
-        if slot_rows:
-            total = float(len(slot_rows))
 
         active = self._metric_counter(
             runtime_metrics,
@@ -508,13 +452,8 @@ class DashboardPage(PageBase):
             "llamacpp_slot_state",
             "slot_state",
         )
-        if slot_rows:
-            active = float(sum(1 for slot in slot_rows if self._slot_row_active(slot)))
-        if not active:
-            for status in (api, props):
-                if status and status.slots_processing is not None:
-                    active = float(status.slots_processing)
-                    break
+        if not active and api and api.slots_processing is not None:
+            active = float(api.slots_processing)
         if not active and runtime_metrics and runtime_metrics.values:
             active = sum(
                 value
@@ -530,29 +469,59 @@ class DashboardPage(PageBase):
 
         return int(active), int(total) if total else None
 
+    def _monitor_status_and_metrics(self) -> tuple[RuntimeStatus, RuntimeMetrics | None]:
+        config = self._config_store.load()
+        if config.router_mode and not config.remote_monitor_enabled:
+            status = self._controller.status if self._controller else RuntimeStatus(
+                state=ServerState.STOPPED,
+                host=config.host,
+                port=config.port,
+                model_path=None,
+                api_status=None,
+            )
+            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                status.api_status = ApiStatus(reachable=True, health="router")
+            return status, None
+
+        if not config.remote_monitor_enabled and self._controller:
+            status = self._controller.status
+            client = self._controller._api_client
+            metrics = client.fetch_metrics() if client else None
+            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                status.api_status = ApiStatus(
+                    reachable=bool(metrics and metrics.reachable),
+                    health="ok" if metrics and metrics.reachable else "unreachable",
+                )
+            return status, metrics
+
+        host = config.remote_monitor_host if config.remote_monitor_enabled else config.host
+        port = config.remote_monitor_port if config.remote_monitor_enabled else config.port
+        from ..services.runtime_api import LlamaServerApiClient
+        client = LlamaServerApiClient(host, port)
+        metrics = client.fetch_metrics()
+        state = ServerState.HEALTHY if metrics and metrics.reachable else ServerState.UNHEALTHY
+        status = RuntimeStatus(
+            state=state,
+            host=host,
+            port=port,
+            model_path=None,
+            api_status=ApiStatus(
+                reachable=bool(metrics and metrics.reachable),
+                health="ok" if metrics and metrics.reachable else "unreachable",
+            ),
+        )
+        return status, metrics
+
     def _token_rates(self, timestamp: float, prompt_tokens: float, generated_tokens: float) -> tuple[float, float]:
         previous = self._last_counter_sample
         self._last_counter_sample = (timestamp, prompt_tokens, generated_tokens)
         if previous is None:
             return 0.0, 0.0
         previous_time, previous_prompt, previous_generated = previous
-        elapsed = timestamp - previous_time
-        if elapsed <= 0:
-            return 0.0, 0.0
+        elapsed = max(1e-6, timestamp - previous_time)
         prompt_delta = max(0.0, prompt_tokens - previous_prompt)
         generated_delta = max(0.0, generated_tokens - previous_generated)
         return prompt_delta / elapsed, generated_delta / elapsed
-
-    @staticmethod
-    def _slot_row_active(slot: dict) -> bool:
-        for key in ("is_processing", "processing", "active"):
-            value = slot.get(key)
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (int, float)):
-                return value > 0
-        state = str(slot.get("state") or slot.get("status") or "").lower()
-        return state in {"processing", "active", "busy"}
 
     @staticmethod
     def _log_token_rates(log_lines: list[LogLine]) -> tuple[float, float]:
@@ -571,61 +540,6 @@ class DashboardPage(PageBase):
             if prompt_rate > 0.0 and generation_rate > 0.0:
                 break
         return prompt_rate, generation_rate
-
-    def _monitor_status_and_client(self) -> tuple[RuntimeStatus, LlamaServerApiClient | None]:
-        config = self._config_store.load()
-        if config.router_mode and not config.remote_monitor_enabled:
-            # Local router mode must never create an HTTP client from the
-            # Dashboard. Even /health can lazy-load the first preset before
-            # the controller is injected during startup. Observe only process
-            # state and logs.
-            if self._controller:
-                status = self._controller.status
-            else:
-                status = RuntimeStatus(
-                    state=ServerState.STOPPED,
-                    host=config.host,
-                    port=config.port,
-                    model_path=None,
-                    api_status=None,
-                )
-            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-                status.api_status = ApiStatus(reachable=True, health="router")
-            return status, None
-
-
-        if not config.remote_monitor_enabled and self._controller:
-            status = self._controller.status
-            if status.api_status and status.api_status.reachable and self._controller._api_client:
-                return status, self._controller._api_client
-        host = config.remote_monitor_host if config.remote_monitor_enabled else config.host
-        port = config.remote_monitor_port if config.remote_monitor_enabled else config.port
-        client = LlamaServerApiClient(host, port, router_mode=(config.router_mode and not config.remote_monitor_enabled))
-        api = client.status()
-        state = ServerState.HEALTHY if api.reachable else ServerState.UNHEALTHY
-        status = RuntimeStatus(
-            state=state,
-            host=host,
-            port=port,
-            model_path=None,
-            api_status=api,
-        )
-        return status, client if api.reachable else None
-
-    @staticmethod
-    def _loaded_model_id(router_models: list[dict]) -> str | None:
-        # Old format: status: {value: "loaded"|"unloaded"}
-        for model in router_models:
-            if DashboardPage._model_state(model) == "loaded":
-                model_id = model.get("id")
-                if isinstance(model_id, str):
-                    return model_id
-        # New format (no status field): first model with an id is active
-        if router_models:
-            model_id = router_models[0].get("id")
-            if isinstance(model_id, str):
-                return model_id
-        return None
 
     @staticmethod
     def _active_slots_from_logs(log_lines: list[LogLine]) -> int:
@@ -680,51 +594,10 @@ class DashboardPage(PageBase):
         return 0.0
 
     @staticmethod
-    def _current_model_name(router_models: list[dict], api_model_path: str | None, status_model_path: str | None) -> str:
-        # Old format: pick the first model with status.value == "loaded"
-        for model in router_models:
-            state = DashboardPage._model_state(model)
-            if state == "loaded":
-                model_id = model.get("id")
-                if model_id:
-                    return str(model_id)
-        # /props or /health model_path (works for single-model and new router)
-        for model_path in (api_model_path, status_model_path):
-            if model_path and model_path != "none" and Path(model_path).suffix:
-                return Path(model_path).name
-        # New format (no status field) or fallback: first model with an id
-        for model in router_models:
-            model_id = model.get("id")
-            if model_id:
-                return str(model_id)
-        model_path = api_model_path or status_model_path
-        if model_path and model_path != "none":
-            return Path(model_path).name
+    def _current_model_name(_router_models: list[dict] | None, _api_model_path: str | None, status_model_path: str | None) -> str:
+        if status_model_path and status_model_path != "none" and Path(status_model_path).suffix:
+            return Path(status_model_path).name
         return "—"
-
-    @staticmethod
-    def _model_state(model: dict) -> str:
-        raw = model.get("status") or model.get("state") or ""
-        if isinstance(raw, dict):
-            return str(raw.get("value") or "").lower()
-        return str(raw).lower()
-
-    @staticmethod
-    def _model_meta(model: dict | None) -> dict:
-        """Extract metadata dict from a /models entry if present."""
-        if not model:
-            return {}
-        meta = model.get("meta")
-        if isinstance(meta, dict):
-            return meta
-        return {}
-
-    @staticmethod
-    def _find_loaded_model(router_models: list[dict]) -> dict | None:
-        for model in router_models:
-            if DashboardPage._model_state(model) == "loaded":
-                return model
-        return None
 
 
 __all__ = ["DashboardPage"]
