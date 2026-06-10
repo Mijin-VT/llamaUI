@@ -291,8 +291,6 @@ def build_argv(
     # one source of truth. Do not let a saved global/default ``models_max``
     # override the Run page router control later in argv.
     if models_max > 0:
-        if config.router_mode and models_max < 2:
-            models_max = 2
         argv.extend(["--models-max", str(models_max)])
     global_settings = config.global_settings
     if config.router_mode:
