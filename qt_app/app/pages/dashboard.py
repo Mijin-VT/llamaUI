@@ -555,16 +555,27 @@ class DashboardPage(PageBase):
 
     def _monitor_status_and_client(self) -> tuple[RuntimeStatus, LlamaServerApiClient | None]:
         config = self._config_store.load()
+        if config.router_mode and not config.remote_monitor_enabled:
+            # Local router mode must never create an HTTP client from the
+            # Dashboard. Even /health can lazy-load the first preset before
+            # the controller is injected during startup. Observe only process
+            # state and logs.
+            if self._controller:
+                status = self._controller.status
+            else:
+                status = RuntimeStatus(
+                    state=ServerState.STOPPED,
+                    host=config.host,
+                    port=config.port,
+                    model_path=None,
+                    api_status=None,
+                )
+            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                status.api_status = ApiStatus(reachable=True, health="router")
+            return status, None
+
         if not config.remote_monitor_enabled and self._controller:
             status = self._controller.status
-            if config.router_mode:
-                # Router mode endpoints are active in llama-server: /health,
-                # /models, /props, /metrics, and /slots can all route through
-                # a model and trigger lazy loads/LRU eviction. Dashboard must
-                # observe only controller process state and logs.
-                if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-                    status.api_status = ApiStatus(reachable=True, health="router")
-                return status, None
             if status.api_status and status.api_status.reachable and self._controller._api_client:
                 return status, self._controller._api_client
         host = config.remote_monitor_host if config.remote_monitor_enabled else config.host
