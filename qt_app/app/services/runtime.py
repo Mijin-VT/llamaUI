@@ -232,8 +232,6 @@ def generate_models_preset(
         if not mmproj_written and model.mmproj_path:
             entries.append(f"mmproj = {model.mmproj_path}")
 
-        # Always enable metrics for dashboard monitoring.
-        entries.append("metrics = true")
         section_name = model_path.stem
         section = f"[{section_name}]\n" + "\n".join(entries)
         sections.append(section)
@@ -332,6 +330,13 @@ def build_argv(
     if not config.router_mode:
         argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
         argv.append("--metrics")
+    else:
+        # Router mode: the router has an internal self-poll loop (~2 s) that
+        # hits proxied endpoints.  With models_autoload=true (the default),
+        # every poll triggers model loads and LRU eviction cycles.  Disable
+        # autoload — the user manages models through the Loaded Models panel.
+        argv = [a for a in argv if a not in ("--no-models-autoload",)]
+        argv.append("--no-models-autoload")
     return argv
 class LlamaServerController:
     """Owns a local llama-server subprocess.
