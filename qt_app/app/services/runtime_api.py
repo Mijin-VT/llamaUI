@@ -166,10 +166,12 @@ class LlamaServerApiClient:
         host: str = "127.0.0.1",
         port: int = 8080,
         timeout: float = _DEFAULT_TIMEOUT,
+        router_mode: bool = False,
     ) -> None:
         self.host = host
         self.port = port
         self.timeout = timeout
+        self.router_mode = router_mode
         # Cache the /model/load capability probe so the health thread
         # does not POST a dummy request every second. Invalidated by
         # constructing a new client (the controller does this on every
@@ -263,7 +265,11 @@ class LlamaServerApiClient:
         if not health.reachable:
             return health
 
-        health.model_load_supported = self.detect_model_load_support()
+        # In router mode, the POST /model/load probe triggers spurious
+        # model loads and LRU eviction loops.  The router manages models
+        # natively — skip the probe entirely.
+        if not self.router_mode:
+            health.model_load_supported = self.detect_model_load_support()
         return health
 
     # -- model switching -----------------------------------------------------

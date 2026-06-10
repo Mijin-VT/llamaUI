@@ -184,7 +184,7 @@ def generate_models_preset(
 
         if profile is not None:
             user_set = getattr(profile, "user_set", None) or set()
-            skip_ids = {"model", "host", "port", "extra_args"}
+            skip_ids = {"model", "host", "port", "extra_args", "metrics"}
             for option_id, value in profile.settings.items():
                 if option_id in skip_ids or option_id not in user_set:
                     continue
@@ -212,6 +212,13 @@ def generate_models_preset(
                     ini_key = tok.lstrip("-")
                     if ini_key == "mmproj":
                         mmproj_written = True
+                    # Skip metrics — we force it at the end.
+                    if ini_key == "metrics":
+                        if i + 1 < len(raw) and not raw[i + 1].startswith("--"):
+                            i += 2
+                        else:
+                            i += 1
+                        continue
                     if i + 1 < len(raw) and not raw[i + 1].startswith("--"):
                         entries.append(f"{ini_key} = {raw[i + 1]}")
                         i += 2
@@ -326,6 +333,7 @@ class LlamaServerController:
 
     def __init__(self, on_log: Optional[LogCallback] = None) -> None:
         self.on_log = on_log
+        self.router_mode = False
         self.log_buffer = LogBuffer()
         self._process: Optional[subprocess.Popen[str]] = None
         self._status = RuntimeStatus(state=ServerState.STOPPED)
@@ -355,18 +363,17 @@ class LlamaServerController:
             self._sync_state()
             return RuntimeStatus(**self._status.__dict__)
 
-    def try_attach(self, host: str, port: int) -> bool:
+    def try_attach(self, host: str, port: str, router_mode: bool = False) -> bool:
         """Try to attach to an already-running llama-server on *host*:*port*.
-
         Returns True if a healthy llama-server was found and the controller
         is now attached (state = HEALTHY).  Returns False if nothing was
         found — the caller should ``start()`` a fresh server.
-
         On attach, the controller does NOT own the process (``_process`` is
         ``None``), so ``stop()`` will need to discover the PID via
         ``lsof``/``ss``.  Health polling is started so the UI updates live.
         """
-        client = LlamaServerApiClient(host=host, port=port, timeout=2.0)
+        self.router_mode = router_mode
+        client = LlamaServerApiClient(host=host, port=port, timeout=2.0, router_mode=router_mode)
         api_status = client.status()
         if not api_status.reachable:
             return False
@@ -397,13 +404,14 @@ class LlamaServerController:
         port: int = 8080,
         model_path: Optional[str] = None,
         profile_name: Optional[str] = None,
+        router_mode: bool = False,
     ) -> RuntimeStatus:
         """Launch llama-server with *argv*.
-
         Raises on pre-condition failure (already running, binary missing,
         port occupied).
         """
         with self._lock:
+            self.router_mode = router_mode
             if self._process and self._process.poll() is None:
                 raise RuntimeError("llama-server is already running")
             if not Path(argv[0]).is_file():
@@ -828,7 +836,8 @@ class LlamaServerController:
         if old_stop is not None:
             old_stop.set()
         self._api_client = LlamaServerApiClient(
-            host=host, port=port, timeout=_HEALTH_TIMEOUT
+            host=host, port=port, timeout=_HEALTH_TIMEOUT,
+            router_mode=self.router_mode,
         )
 
         def loop() -> None:

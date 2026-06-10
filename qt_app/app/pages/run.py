@@ -255,7 +255,7 @@ class RunPage(PageBase):
         self._build_logs()
         self._reload_models()
         self._timer = QTimer(self)
-        self._timer.setInterval(2000)
+        self._timer.setInterval(5000)
         self._timer.timeout.connect(self._poll_status)
         self._timer.start()
 
@@ -1702,7 +1702,7 @@ class RunPage(PageBase):
             model = self._selected_model()
             profile = self._selected_profile()
             host, port = self._effective_host_port()
-            if not is_port_available(host, port) and self.controller.try_attach(host, port):
+            if not is_port_available(host, port) and self.controller.try_attach(host, port, router_mode=config.router_mode):
                 self.status.setText(f"Attached to existing llama-server on {host}:{port}")
                 return
             status = self.controller.start(
@@ -1711,6 +1711,7 @@ class RunPage(PageBase):
                 port,
                 model_path=config.models_dir if config.router_mode else (model.path if model else None),
                 profile_name=profile.name if (profile and not config.router_mode) else None,
+                router_mode=config.router_mode,
             )
             if model is not None:
                 from llama_data.models import utc_now
@@ -1780,7 +1781,7 @@ class RunPage(PageBase):
         """On startup, check if llama-server is already running and attach."""
         config = self.config_store.load()
         host, port = self._effective_host_port()
-        if self.controller.try_attach(host, port):
+        if self.controller.try_attach(host, port, router_mode=config.router_mode):
             self.status.setText(
                 f"Attached to existing llama-server on {host}:{port}"
             )
@@ -1796,8 +1797,11 @@ class RunPage(PageBase):
             self.controller.poll_health()
             status = self.controller.status
             config = self.config_store.load()
+            # Poll loaded models less frequently (every 3rd tick ≈ 15 s).
             if config.router_mode:
-                self._poll_router_models()
+                self._router_poll_tick = getattr(self, "_router_poll_tick", 0) + 1
+                if self._router_poll_tick % 3 == 1:
+                    self._poll_router_models()
         self._set_status(status)
         self._render_logs()
         self.inspector_changed.emit({
