@@ -62,8 +62,10 @@ This folder is the **service layer** of the Qt application—UI-independent busi
 
 1. **Search** — `HuggingFaceSearchService.search(query, filters)` calls the HF `/api/models` endpoint with `filter=gguf`.
 2. **Hydrate** — A `ThreadPoolExecutor` (max 6) maps `_hydrate_repo` over results. Each repo fetches detail JSON and siblings, falling back to a full tree walk if size metadata is missing.
-3. **Quant & Fit** — File names are parsed for quantization via regex. `compute_hardware_fit` compares the smallest non-companion file size against detected RAM/VRAM to label compatibility (`ideal` / `likely` / `unlikely`).
-4. **Outcome** — Returns an `HfSearchOutcome` (ok / error / empty) that pages render directly without exception handling in the UI layer.
+3. **Quant & Fit** — File names are parsed for quantization via regex. `compute_hardware_fit` evaluates selected GGUF files against detected RAM/VRAM/CPU, companion projectors, MTP/draft files, and KV cache estimates for 16K / 32K / 64K / 128K contexts. It returns `HardwareFit` rows with score, label, per-context tier/bytes, and optional `MoeFit` expert estimates for MoE models.
+4. **Recommendations** — `recommended_profile_settings()` converts a `HardwareFit` into sensible llama-server profile values (`ctx_size`, `n_gpu_layers`, `flash_attn`, `cache_type_k/v`, batch sizes, threads, `parallel`) so Discover can offer a default profile after download.
+5. **Card normalization** — `fetch_card_text()` reads raw README Markdown and runs `normalize_model_card_markdown()` so embedded HuggingFace HTML lists/tables render as text in `QTextBrowser`.
+6. **Outcome** — Returns an `HfSearchOutcome` (ok / error / empty) that pages render directly without exception handling in the UI layer.
 
 ### Library Scan Flow (`library_scan.py`)
 

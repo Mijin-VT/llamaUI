@@ -68,11 +68,12 @@ Advanced option groups use `_WrappedTabs` (FlowLayout tab buttons + `QStackedWid
 
 ### DiscoverPage
 - `_search()` → builds `HfFilter` list from `FilterPill` states → starts `_SearchThread`.
-- `_SearchThread.finished` → receives `list[HfRepoSummary]` → populates `QTableWidget`.
-- `_select_repo()` → groups files into `_Selectable` entries (split-set detection via regex) → populates file combo + starts `_CardThread` for model card text.
-- `_download_selected()` → creates `HfDownloadRequest` → hands to `DownloadManager`.
+- `_SearchThread.finished` → receives `list[HfRepoSummary]` → sorts repos by `HardwareFit.score` then downloads/likes and populates the resizable results table.
+- `_select_repo()` → groups files into `_Selectable` quant/split entries (split-set detection via regex), populates the file combo, refreshes the quant-fit comparison table, and starts `_CardThread` for normalized model card text.
+- `_refresh_selected_fit()` / `_refresh_quant_fit_table()` → recompute `compute_hardware_fit()` for the currently selected quant and for every selectable quant; columns show fit tier plus total memory at 16K / 32K / 64K / 128K contexts.
+- `_download_selected()` → creates `HfDownloadRequest` entries for the selected model plus companions, keeps the selected `HardwareFit` for the primary job, and hands jobs to `DownloadManager`.
+- `_on_manager_finished()` → updates queue rows, optionally asks the user to create a recommended default `ModelProfile` from `recommended_profile_settings()`, and navigates to Library when the queue empties after a successful download.
 - `DownloadManager` signals (`progress`, `status_changed`, `finished`, `queue_changed`) → update `DownloadRow` widgets and queue status label.
-- On successful completion with empty queue, emits `navigate_requested("library")`.
 
 ### SettingsPage
 - `_load_config()` → `ConfigStore.load()` → caches in `self._config`.

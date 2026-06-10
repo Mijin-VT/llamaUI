@@ -16,11 +16,13 @@ Scan a directory of GGUF files. The scanner distinguishes **primary runnable mod
 
 <p align="center"><img src="screenshots/Discovery.png" width="700"></p>
 
-Search HuggingFace for GGUF models. Filter by GGUF format, gated repos, and multimodal support. Results show downloads, likes, best hardware-fit score, file count, and smallest quant size.
+Search HuggingFace for GGUF models. Filter by GGUF format, gated repos, and multimodal support. Results are ranked by a local hardware-fit score instead of popularity alone, using detected GPU VRAM, system RAM, CPU threads, model quant size, companion projectors, MTP/draft files, and long-context KV cache estimates.
 
 <p align="center"><img src="screenshots/Discovery_Model_list.png" width="700"></p>
 
-Select a model to see its full details — tags, license, quant variants with sizes and hardware-fit estimates. Download directly with concurrent multi-file support, progress tracking, and HTTP Range resume. Model cards are cached locally for offline reading.
+The Discover panel now shows the ranking inputs directly in the UI. In the screenshot, the top results table is sorted by **Best fit** (`GPU fit through 64K`, `GPU fit through 32K`, etc.), while the selected model card expands the current quant into memory estimates for 16K / 32K / 64K / 128K contexts. The quant table compares every available GGUF variant side by side, so selecting `Q4_K_M`, `Q6_K`, `Q8_0`, or another quant immediately recalculates whether each context fits on GPU, requires partial offload, falls back to RAM/CPU, or is likely too large.
+
+Discovery also handles MoE models conservatively: it detects common MoE naming patterns, estimates total/active experts, and shows how many experts are likely GPU-resident versus CPU-offloaded. After a download completes, llamaUI can offer to create a **Recommended** default profile for that model using the selected quant's fit result: context size, GPU layers, flash attention, KV cache type, batch size, micro-batch size, threads, and parallel slots. Model cards are normalized before display so HuggingFace README HTML bullets and tables render as readable Markdown, then cached locally for offline reading.
 
 ### Run
 
