@@ -287,10 +287,17 @@ def build_argv(
     # Per-model preset for router mode.
     if models_preset_path:
         argv.extend(["--models-preset", models_preset_path])
-    # Router mode: max simultaneously loaded models.
+    # Router mode: max simultaneously loaded models. This must have exactly
+    # one source of truth. Do not let a saved global/default ``models_max``
+    # override the Run page router control later in argv.
     if models_max > 0:
+        if config.router_mode and models_max < 2:
+            models_max = 2
         argv.extend(["--models-max", str(models_max)])
-    argv.extend(config.global_settings.to_argv(LLAMA_OPTION_CATALOG))
+    global_settings = config.global_settings
+    if config.router_mode:
+        global_settings = global_settings.without("models_max")
+    argv.extend(global_settings.to_argv(LLAMA_OPTION_CATALOG))
     # Profile settings overlay — only include user-explicitly-set values
     # that differ from catalog defaults.  Keep host/port in skip_ids so
     # they are not double-emitted.

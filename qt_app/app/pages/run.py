@@ -855,7 +855,7 @@ class RunPage(PageBase):
         max_row = QHBoxLayout()
         max_row.addWidget(QLabel("Max loaded models:", self._router_panel))
         self._models_max_spin = QSpinBox(self._router_panel)
-        self._models_max_spin.setRange(1, 32)
+        self._models_max_spin.setRange(2, 32)
         self._models_max_spin.setValue(4)
         self._models_max_spin.valueChanged.connect(self._update_command_preview)
         max_row.addWidget(self._models_max_spin)
