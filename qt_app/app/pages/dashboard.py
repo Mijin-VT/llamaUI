@@ -289,7 +289,8 @@ class DashboardPage(PageBase):
         runtime_metrics: RuntimeMetrics | None = None
         router_models: list[dict] = []
         slot_rows: list[dict] = []
-        if api and api.reachable and client:
+        config = self._config_store.load()
+        if api and api.reachable and client and not (config.router_mode and not config.remote_monitor_enabled):
             router_models = client.list_loaded_models()
             loaded_id = self._loaded_model_id(router_models)
             props = client.fetch_props(model=loaded_id)
@@ -556,11 +557,19 @@ class DashboardPage(PageBase):
         config = self._config_store.load()
         if not config.remote_monitor_enabled and self._controller:
             status = self._controller.status
+            if config.router_mode:
+                # Router mode endpoints are active in llama-server: /health,
+                # /models, /props, /metrics, and /slots can all route through
+                # a model and trigger lazy loads/LRU eviction. Dashboard must
+                # observe only controller process state and logs.
+                if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                    status.api_status = ApiStatus(reachable=True, health="router")
+                return status, None
             if status.api_status and status.api_status.reachable and self._controller._api_client:
                 return status, self._controller._api_client
         host = config.remote_monitor_host if config.remote_monitor_enabled else config.host
         port = config.remote_monitor_port if config.remote_monitor_enabled else config.port
-        client = LlamaServerApiClient(host, port)
+        client = LlamaServerApiClient(host, port, router_mode=(config.router_mode and not config.remote_monitor_enabled))
         api = client.status()
         state = ServerState.HEALTHY if api.reachable else ServerState.UNHEALTHY
         status = RuntimeStatus(
