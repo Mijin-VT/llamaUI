@@ -593,6 +593,7 @@ class DashboardPage(PageBase):
                 status.api_status = ApiStatus(reachable=True, health="router")
             return status, None
 
+
         if not config.remote_monitor_enabled and self._controller:
             status = self._controller.status
             if status.api_status and status.api_status.reachable and self._controller._api_client:
