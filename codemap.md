@@ -15,7 +15,7 @@ llamaUI is a native desktop launcher and manager for `llama-server`, built with 
 |-----------|------------------------|--------------|
 | `qt_app/` | Native PySide6 application package; script/package entry points, Qt application bootstrap, shared stores, and cleanup utility. | [View Map](qt_app/codemap.md) |
 | `qt_app/app/` | Qt shell composition layer: `QApplication` factory, `MainWindow`, navigation/sidebar wiring, persisted splitter state, and global dark theme. | [View Map](qt_app/app/codemap.md) |
-| `qt_app/app/pages/` | Full-page Qt widgets for library, discovery/downloads, settings, run lifecycle/options, diagnostics, and placeholders. | [View Map](qt_app/app/pages/codemap.md) |
+| `qt_app/app/pages/` | Full-page Qt widgets for library, discovery/downloads, settings, run lifecycle/options, real-time metrics dashboard, diagnostics, and placeholders. | [View Map](qt_app/app/pages/codemap.md) |
 | `qt_app/app/services/` | UI-independent service layer for subprocess runtime control, HF/network I/O, downloads, library scanning, binary validation, option-schema parsing, dialogs, and diagnostics. | [View Map](qt_app/app/services/codemap.md) |
 | `qt_app/app/widgets/` | Reusable theme-aware Qt widgets and shell chrome: semantic buttons, cards/chips/log rows, collapsible groups, flow layout, sidebar, inspector, and slider/spin composites. | [View Map](qt_app/app/widgets/codemap.md) |
 | `qt_app/icons/` | Bundled SVG nav icons used by the collapsible sidebar. |

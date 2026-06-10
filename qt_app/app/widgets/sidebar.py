@@ -74,6 +74,7 @@ class NavItemId(str, Enum):
     DISCOVER = "discover"
     RUN = "run"
     SETTINGS = "settings"
+    DASHBOARD = "dashboard"
     DIAGNOSTICS = "diagnostics"
 
 
@@ -82,6 +83,7 @@ _NAV_LABELS: Dict[NavItemId, str] = {
     NavItemId.DISCOVER: "Discover",
     NavItemId.RUN: "Run",
     NavItemId.SETTINGS: "Settings",
+    NavItemId.DASHBOARD: "Dashboard",
     NavItemId.DIAGNOSTICS: "Diagnostics",
 }
 
@@ -92,6 +94,7 @@ _NAV_ICON_FILES: Dict[NavItemId, str] = {
     NavItemId.DISCOVER: "Discover.svg",
     NavItemId.RUN: "Run.svg",
     NavItemId.SETTINGS: "Settings.svg",
+    NavItemId.DASHBOARD: "Dashboard.svg",
     NavItemId.DIAGNOSTICS: "Diagnostic.svg",
 }
 _nav_icon_cache: Dict[NavItemId, QIcon] | None = None

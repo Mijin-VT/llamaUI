@@ -26,14 +26,14 @@ This package is the native Qt shell for llamaUI. It bootstraps the `QApplication
    - `QSplitter` (horizontal) → left `Sidebar` + right "center column".
    - Center column → `TopHeader` (`QLabel` title/subtitle) + `QStackedWidget`.
    - Splitter sizes are restored from `QSettings` and saved on `splitterMoved`; sidebar collapse state is restored, `Sidebar.collapse_changed` is wired, and collapse changes adjust splitter sizes.
-3. **Page Lifecycle** — All five pages (`LibraryPage`, `DiscoverPage`, `RunPage`, `SettingsPage`, `DiagnosticsPage`) are constructed up front. Each is added to the stack. Optional signals are connected:
+3. **Page Lifecycle** — All seven pages (`LibraryPage`, `DiscoverPage`, `RunPage`, `SettingsPage`, `DashboardPage`, `DiagnosticsPage`) are constructed up front. Each is added to the stack. `DashboardPage` receives `RunPage`'s `LlamaServerController` via `set_controller()` so both pages share the same log buffer and health data. Optional signals are connected:
    - `navigate_requested` → `MainWindow._on_page_navigate`
    - `inspector_changed` → `MainWindow._on_inspector_changed` (forwards payload to `Sidebar.update_details`)
 4. **Navigation** — `navigate(item_id)`:
    - Sets the current stack widget.
    - Highlights the sidebar item.
    - Updates header title/subtitle from page metadata.
-   - Calls `_refresh()` on `RUN` and `LIBRARY` if available.
+   - Calls `_refresh()` on `RUN`, `LIBRARY`, and `DASHBOARD` if available.
    - Calls `_reload_models()` on `RUN` if available.
    - Handles a pending model path hand-off from `DiscoverPage` → `LibraryPage`.
 5. **Inspector Updates** — The `RunPage` emits `inspector_changed(dict)` with keys like `title`, `chip_text`, `line1`, `line2`, `command_lines`. `MainWindow` unpacks this and forwards it to `Sidebar.update_details`, which renders runtime status in the left rail.
@@ -43,7 +43,10 @@ This package is the native Qt shell for llamaUI. It bootstraps the `QApplication
 - **Pages** (`qt_app/app/pages/`)
   - `LibraryPage` — receives `library_store`, `profile_store`, `config_store`; uses `services.library_scan` for scanning and metadata; uses `widgets.cards`, `widgets.buttons` for UI.
   - `RunPage` — receives `config_store`, `library_store`, `profile_store`; uses `services.runtime` (`LlamaServerController`, `build_argv`), `services.option_schema`, `services.runtime_api`, and many widgets (`buttons`, `cards`, `slider_spin`, `flow`). Emits `inspector_changed` to update the sidebar.
-  - `DiscoverPage`, `SettingsPage`, `DiagnosticsPage` — self-contained pages added to the stack with no extra store arguments.
+  - `DashboardPage` — receives `LlamaServerController` via `set_controller()` from `MainWindow`; uses `services.runtime`, `services.runtime_api`, pure `QPainter` charts, and `widgets.cards`/`widgets.buttons`. No store dependencies.
+  - `DiscoverPage` — Hugging Face search, repo file selection, split-set grouping, download queue with live progress.
+  - `SettingsPage` — Application configuration: binary path, models directory, host/port, router mode, global defaults, HF token.
+  - `DiagnosticsPage` — Framework diagnostics, binary introspection, HuggingFace connectivity probe.
   - All pages inherit from `PageBase` (`pages/base.py`), which provides a scrollable `QScrollArea` scaffold, `navigate_requested` signal, and a `PagePolicy` enum.
 
 - **Widgets** (`qt_app/app/widgets/`)

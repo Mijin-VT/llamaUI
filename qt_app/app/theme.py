@@ -503,6 +503,23 @@ def build_stylesheet() -> str:
         background-color: {BG_APP};
     }}
 
+    /* --- Dashboard page --- */
+    QWidget#DashboardChart {{
+        background-color: {BG_INSET};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+    }}
+    QPlainTextEdit#DashboardLogDisplay {{
+        {f_mono}
+        background-color: {BG_INSET};
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        color: {FG_SECONDARY};
+        padding: 8px;
+        font-size: 12px;
+        selection-background-color: {ACCENT};
+    }}
+
     /* --- Inspector collapse/expand buttons --- */
     QPushButton#InspectorCollapseBtn,
     QPushButton#InspectorExpandBtn {{

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from llama_data import ConfigStore, LibraryStore, ProfileStore
 
+from .pages.dashboard import DashboardPage
 from .pages.diagnostics import DiagnosticsPage
 from .pages.discover import DiscoverPage
 from .pages.library import LibraryPage
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
             NavItemId.DISCOVER: DiscoverPage(),
             NavItemId.RUN: RunPage(config_store=config_store, library_store=library_store, profile_store=profile_store),
             NavItemId.SETTINGS: SettingsPage(),
+            NavItemId.DASHBOARD: DashboardPage(),
             NavItemId.DIAGNOSTICS: DiagnosticsPage(),
         }
         for page in self._pages.values():
@@ -113,6 +115,13 @@ class MainWindow(QMainWindow):
                 page.navigate_requested.connect(self._on_page_navigate)
             if hasattr(page, "inspector_changed"):
                 page.inspector_changed.connect(self._on_inspector_changed)
+
+        # Inject RunPage's LlamaServerController into DashboardPage
+        # so the dashboard can read logs and poll health.
+        run_page = self._pages[NavItemId.RUN]
+        dashboard_page = self._pages[NavItemId.DASHBOARD]
+        if hasattr(run_page, "controller") and hasattr(dashboard_page, "set_controller"):
+            dashboard_page.set_controller(run_page.controller)
 
         self.setCentralWidget(root)
         self.navigate(NavItemId.RUN)
@@ -174,7 +183,7 @@ class MainWindow(QMainWindow):
         self.subtitle.setText(page.property("subtitle") or "")
 
 
-        if item_id in {NavItemId.RUN, NavItemId.LIBRARY} and hasattr(page, "_refresh"):
+        if item_id in {NavItemId.RUN, NavItemId.LIBRARY, NavItemId.DASHBOARD} and hasattr(page, "_refresh"):
             page._refresh()
         if item_id == NavItemId.LIBRARY:
             discover = self._pages.get(NavItemId.DISCOVER)

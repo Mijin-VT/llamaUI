@@ -12,8 +12,8 @@ This package contains the full-screen **page widgets** that populate the central
 | `discover.py` | `DiscoverPage` | Hugging Face search, repo file selection, split-set grouping, download queue with live progress. |
 | `settings.py` | `SettingsPage` | Application configuration: binary path, models directory, host/port, router mode, global defaults, HF token. |
 | `run.py` | `RunPage` | llama-server lifecycle (start / stop / restart), schema-driven option editors, profile CRUD, log streaming, router mode, and advanced option groups rendered with `_WrappedTabs` (FlowLayout buttons + `QStackedWidget`) for multi-row tab wrapping. |
+| `dashboard.py` | `DashboardPage` | Real-time server metrics dashboard: rolling QPainter line/area charts (throughput, health latency, slot utilization), status card, and streaming log viewer with search/filter/auto-scroll. Shares `LlamaServerController` with `RunPage`. |
 | `diagnostics.py` | `DiagnosticsPage` | Framework diagnostics, binary introspection, Hugging Face connectivity probe. |
-| `placeholders.py` | `PlaceholderPage` | Generic placeholder card for pages not yet implemented. |
 | `placeholders.py` | `RunPlaceholderPage` | Early Run page shell used before `RunPage` was wired. |
 
 ---
@@ -95,6 +95,12 @@ Advanced option groups use `_WrappedTabs` (FlowLayout tab buttons + `QStackedWid
 - Framework: `framework_diagnostics()` → `QLabel` summary + `QPlainTextEdit` detail.
 - Binary: `build_runtime_schema(path)` → version, parsed counts, probe metadata.
 - HF: `_resolve_hf_token()` (env-var > saved) → `check_hf_connectivity(token)` → reachability chip + latency.
+
+### DashboardPage
+- `set_controller()` — called by `MainWindow` after construction to inject `RunPage`'s `LlamaServerController`.
+- `QTimer` (2 s interval) → `_poll()` → reads `controller.status` + `LlamaServerApiClient.fetch_props()` → updates status card tiles, pushes metrics to three `_RollingChart` widgets (throughput, health latency, slot utilization), and re-renders filtered logs from `controller.log_buffer`.
+- `_RollingChart` — pure `QPainter` rolling line/area chart with grid, axis labels, and current-value readout. `deque(maxlen=120)` for 2-minute rolling window.
+- Log viewer mirrors `RunPage`'s pattern: reads `log_buffer.lines()`, applies search + source filter, renders to `QPlainTextEdit` with auto-scroll toggle.
 
 ---
 
