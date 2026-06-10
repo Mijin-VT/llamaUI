@@ -292,7 +292,7 @@ class DashboardPage(PageBase):
             router_models = client.list_loaded_models()
             loaded_id = self._loaded_model_id(router_models)
             props = client.fetch_props(model=loaded_id)
-            runtime_metrics = client.fetch_metrics()
+            runtime_metrics = client.fetch_metrics(model=loaded_id)
             slot_rows = client.fetch_slots(model=loaded_id)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
 

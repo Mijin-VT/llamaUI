@@ -218,9 +218,15 @@ class LlamaServerApiClient:
             total_slots=body.get("total_slots") if isinstance(body, dict) else None,
         )
 
-    def fetch_metrics(self) -> RuntimeMetrics:
-        """GET /metrics — return parsed Prometheus counters/gauges."""
-        text, err = _get_text(f"{self.base_url}/metrics", timeout=self.timeout)
+    def fetch_metrics(self, model: str | None = None) -> RuntimeMetrics:
+        """GET /metrics — return parsed Prometheus counters/gauges.
+
+        In router mode, pass *model* to query via ``/metrics?model=<id>``.
+        """
+        url = f"{self.base_url}/metrics"
+        if model:
+            url += f"?model={urllib.parse.quote(model, safe='')}"
+        text, err = _get_text(url, timeout=self.timeout)
         if err is not None:
             return RuntimeMetrics(reachable=False, error=err)
         return RuntimeMetrics(reachable=True, values=_parse_prometheus_metrics(text or ""))
