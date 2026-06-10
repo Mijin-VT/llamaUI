@@ -1,4 +1,4 @@
-# llamUI
+# llamaUI
 
 A native desktop UI for [llama.cpp](https://github.com/ggerganov/llama.cpp)'s `llama-server`. Built with PySide6 / Qt Widgets, targeting Linux (KDE Wayland + NVIDIA tested). It is **not** a web app wrapped in Electron — it is a real Qt application that talks directly to the llama-server binary.
 
@@ -111,8 +111,8 @@ Quick health check: Qt platform plugin and desktop session, llama-server binary 
 ### Quick start (any OS)
 
 ```bash
-git clone https://github.com/NickPittas/llamUI.git
-cd llamUI
+git clone https://github.com/NickPittas/llamaUI.git
+cd llamaUI
 
 # Option 1: pip install (creates 'llamaui' command)
 pip install -e .
@@ -142,7 +142,7 @@ On first launch, go to **Settings**, point it at your `llama-server` binary and 
 ## Project layout
 
 ```
-llamUI/
+llamaUI/
 ├── qt_app/                 # The application
 │   ├── app/
 │   │   ├── pages/          # Library, Discover, Run, Dashboard, Settings, Diagnostics
@@ -182,7 +182,7 @@ These exercise real code paths against temporary directories. No mocks.
 
 ## Router mode
 
-llamUI's router mode uses llama-server's native `--models-preset` feature to serve multiple models simultaneously:
+llamaUI's router mode uses llama-server's native `--models-preset` feature to serve multiple models simultaneously:
 
 1. **Auto-generates a preset INI** from your library and saved profiles
 2. **Each model gets its own settings** — context size, GPU layers, batch size, temperature, mmproj
