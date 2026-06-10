@@ -7,10 +7,15 @@ as structured results.  Callers never see bare exceptions from this module.
 from __future__ import annotations
 
 import json
+import os
+import time
+import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -76,10 +81,35 @@ def _is_connection_refused(error: str) -> bool:
     low = error.lower()
     return "connection refused" in low or "errno 111" in low or "econnrefused" in low
 
+def _trace_local_router_call(method: str, url: str) -> None:
+    """Append a short stack trace for local router HTTP calls.
+
+    This is a targeted diagnostic for unexpected requests hitting the local
+    llama-server router.  It only logs loopback/0.0.0.0 traffic to port 8080
+    and writes to the user's llamaUI data dir.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or ""
+        port = parsed.port or 80
+        if host not in {"127.0.0.1", "0.0.0.0", "localhost"} or port != 8080:
+            return
+        data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        log_path = data_home / "llamaUI" / "router-http-debug.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        stack = "".join(traceback.format_stack(limit=12)[:-1])
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {method} {url} ===\n")
+            fh.write(stack)
+    except Exception:
+        pass
+
+
 
 def _get_json(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[dict], Optional[str]]:
     """GET *url*, return ``(parsed_json, None)`` or ``(None, error_string)``."""
     try:
+        _trace_local_router_call("GET", url)
         req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
@@ -93,6 +123,7 @@ def _get_json(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[dic
 def _get_text(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
     """GET *url*, return ``(text, None)`` or ``(None, error_string)``."""
     try:
+        _trace_local_router_call("GET", url)
         req = urllib.request.Request(url, method="GET", headers={"Accept": "text/plain"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace"), None
@@ -126,6 +157,7 @@ def _post_json(
 ) -> tuple[Optional[dict], Optional[int], Optional[str]]:
     """POST JSON to *url*. Returns ``(parsed, status_code, error)``."""
     try:
+        _trace_local_router_call("POST", url)
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             url,
