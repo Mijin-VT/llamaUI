@@ -14,9 +14,14 @@ for candidate in (REPO_ROOT, QT_ROOT):
 from app.services import (  # noqa: E402
     FrameworkDiagnostics,
     GpuVendor,
+    HardwareProfile,
+    HfFile,
     LlamaServerProbe,
     available_qt_platform_plugins,
     framework_diagnostics,
+    compute_hardware_fit,
+    normalize_model_card_markdown,
+    recommended_profile_settings,
     validate_llama_server,
 )
 from llama_data import AppConfig, ConfigStore, LibraryStore, LocalModel, ModelProfile, ProfileStore, default_paths  # noqa: E402
@@ -157,6 +162,43 @@ def main() -> int:
     check(m3.mmproj_path == "mmproj-c.gguf", "from_json infers mmproj_path from companion_paths")
     m4 = LocalModel.from_json({"id": "d", "path": "d.gguf"})
     check(m4.mmproj_path is None, "from_json leaves mmproj_path None when no companion")
+
+    # Discovery hardware fit: weights + projector + MTP/draft + long-context KV cache.
+    fit = compute_hardware_fit(
+        [
+            HfFile("Qwen2.5-7B-Instruct-Q4_K_M.gguf", size_bytes=4_700_000_000, quantization="Q4_K_M"),
+            HfFile("mmproj-Qwen2.5-7B-f16.gguf", size_bytes=700_000_000, is_multimodal_projector=True),
+            HfFile("Qwen2.5-7B-draft-Q4_K_M.gguf", size_bytes=900_000_000, quantization="Q4_K_M"),
+        ],
+        HardwareProfile(ram_bytes=64 * 1024**3, vram_bytes=24 * 1024**3, cpu_threads=16),
+    )
+    check(fit is not None, "hardware fit computed")
+    check(fit.projector_bytes == 700_000_000, "projector bytes included")
+    check(fit.mtp_bytes == 900_000_000, "mtp/draft bytes included")
+    check(len(fit.contexts) == 4 and fit.contexts[-1].context_tokens == 131_072, "16K-128K contexts estimated")
+    check(fit.quantization == "Q4_K_M", "selected quant retained")
+    check("Q4_K_M" in fit.summary(), "fit summary shows quant")
+    check("quant Q4_K_M" in fit.detail(), "fit detail shows quant")
+    check(fit.contexts[-1].kv_cache_bytes > fit.contexts[0].kv_cache_bytes, "kv cache scales with context")
+    check("128K ctx" in fit.detail(), "fit detail shows long context")
+    moe_fit = compute_hardware_fit(
+        [HfFile("Mixtral-8x7B-Instruct-Q4_K_M.gguf", size_bytes=26_000_000_000, quantization="Q4_K_M")],
+        HardwareProfile(ram_bytes=96 * 1024**3, vram_bytes=24 * 1024**3, cpu_threads=16),
+    )
+    check(moe_fit is not None and moe_fit.moe is not None, "moe metadata inferred")
+    check(moe_fit.moe.total_experts == 8 and moe_fit.moe.active_experts == 2, "mixtral expert counts inferred")
+    check("MoE:" in moe_fit.detail(), "moe detail shown")
+    rec = recommended_profile_settings(fit, HardwareProfile(ram_bytes=64 * 1024**3, vram_bytes=24 * 1024**3, cpu_threads=16))
+    check(rec.settings["ctx_size"] in {16_384, 32_768, 65_536, 131_072}, "recommendation context from fit table")
+    check(rec.settings["flash_attn"] in {"on", "auto"}, "recommendation flash attention set")
+    check("cache_type_k" in rec.settings and "cache_type_v" in rec.settings, "recommendation kv cache settings set")
+    rendered = normalize_model_card_markdown(
+        "# Card\n\n<ul><li>First point</li><li><b>Second</b> point</li></ul>\n"
+        "<table><tr><th>Name</th><th>Value</th></tr><tr><td>Context</td><td>32768</td></tr></table>"
+    )
+    check("- First point" in rendered, "html bullet text preserved")
+    check("**Second** point" in rendered, "html inline emphasis preserved")
+    check("| Name | Value |" in rendered and "| Context | 32768 |" in rendered, "html table text preserved")
     return 0
 
 

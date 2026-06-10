@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QSizePolicy, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget
 
-from llama_data import ConfigStore, LibraryStore, LocalModel, default_paths
+from llama_data import ConfigStore, LLAMA_OPTION_CATALOG, LibraryStore, LocalModel, ModelProfile, ProfileStore, SettingValueMap, default_paths
 from ..services.download_service import (
     DownloadCancelled,
     DownloadError,
@@ -16,7 +17,7 @@ from ..services.download_service import (
     DownloadStatus,
     HfDownloadRequest,
 )
-from ..services.hugging_face import HfFilter, HfRepoSummary, HuggingFaceSearchService, compute_hardware_fit
+from ..services.hugging_face import HfFilter, HfRepoSummary, HuggingFaceSearchService, compute_hardware_fit, recommended_profile_settings
 from ..widgets.buttons import FilterPill, SuccessButton
 from ..widgets.cards import Card, CardTitle, DownloadRow
 from .base import PageBase
@@ -169,6 +170,9 @@ class DiscoverPage(PageBase):
         self._card_text = ""
         self._rows_by_id: dict[str, DownloadRow] = {}
         self._pending_navigate = False
+        self._syncing_quant_table = False
+        self._profile_store = ProfileStore.default()
+        self._recommended_fits_by_job: dict[str, object] = {}
 
         # Created before super().__init__ because PageBase calls ``build()``
         # from inside __init__, and ``build()`` needs the manager available.
@@ -215,10 +219,11 @@ class DiscoverPage(PageBase):
         self.results.setHorizontalHeaderLabels(["Repo", "Author", "Downloads", "Likes", "Best fit", "Files", "Smallest"])
         header = self.results.horizontalHeader()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, 7):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        self.results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for col in range(7):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.results.setColumnWidth(0, 320)
+        self.results.setColumnWidth(4, 220)
+        self.results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.results.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.results.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.results.setTextElideMode(Qt.TextElideMode.ElideMiddle)
@@ -256,6 +261,22 @@ class DiscoverPage(PageBase):
         self.split_warning.setWordWrap(True)
         self.split_warning.hide()
         d.addWidget(self.split_warning)
+
+        self.quant_fit_table = QTableWidget(0, 7, detail)
+        self.quant_fit_table.setHorizontalHeaderLabels(["Quant", "Size", "Fit", "16K", "32K", "64K", "128K"])
+        quant_header = self.quant_fit_table.horizontalHeader()
+        quant_header.setStretchLastSection(False)
+        for col in range(7):
+            quant_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.quant_fit_table.setColumnWidth(2, 220)
+        for col in (3, 4, 5, 6):
+            self.quant_fit_table.setColumnWidth(col, 150)
+        self.quant_fit_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.quant_fit_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.quant_fit_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.quant_fit_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.quant_fit_table.itemSelectionChanged.connect(self._on_quant_table_selection)
+        d.addWidget(self.quant_fit_table)
         self.card_view = QTextBrowser(detail)
         self.card_view.setOpenExternalLinks(True)
         self.card_view.setPlainText("No model card loaded.")
@@ -325,6 +346,7 @@ class DiscoverPage(PageBase):
         thread = _SearchThread(query, self._active_filters(), self._token(), self)
         thread.finished.connect(self._show_results, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(thread.deleteLater)
+        self.quant_fit_table.setRowCount(0)
         thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
         self._threads.append(thread)
         thread.start()
@@ -337,17 +359,26 @@ class DiscoverPage(PageBase):
         self._selectable = []
         self.file_combo.clear()
         self.card_view.setPlainText("No model card loaded.")
+        self.quant_fit_table.setRowCount(0)
         if outcome.status != "ok":
             self.status.setText(outcome.message or outcome.status)
             return
-        self._repos = list(outcome.repos)
+        self._repos = sorted(
+            outcome.repos,
+            key=lambda repo: (repo.hardware_fit.score if repo.hardware_fit else 0, repo.downloads, repo.likes),
+            reverse=True,
+        )
         self.results.setRowCount(len(self._repos))
         for row, repo in enumerate(self._repos):
             sizes = [f.size_bytes for f in repo.files if f.size_bytes]
             smallest = _size(min(sizes)) if sizes else "—"
-            for col, value in enumerate([repo.repo_id, repo.author, str(repo.downloads), str(repo.likes), repo.hardware_fit or "—", str(len(repo.files)), smallest]):
-                self.results.setItem(row, col, QTableWidgetItem(value))
-        self.status.setText(f"Found {len(self._repos)} GGUF repos.")
+            fit = repo.hardware_fit.summary() if repo.hardware_fit else "—"
+            for col, value in enumerate([repo.repo_id, repo.author, str(repo.downloads), str(repo.likes), fit, str(len(repo.files)), smallest]):
+                item = QTableWidgetItem(value)
+                if col == 4 and repo.hardware_fit:
+                    item.setToolTip(repo.hardware_fit.detail())
+                self.results.setItem(row, col, item)
+        self.status.setText(f"Found {len(self._repos)} GGUF repos, ranked by hardware fit.")
         if self._repos:
             self.results.selectRow(0)
 
@@ -366,6 +397,7 @@ class DiscoverPage(PageBase):
         for entry in self._selectable:
             self.file_combo.addItem(entry.label)
         self.file_combo.blockSignals(False)
+        self._refresh_quant_fit_table()
 
         has_files = self.file_combo.count() > 0
         self.download_button.setEnabled(False)
@@ -384,17 +416,69 @@ class DiscoverPage(PageBase):
         if repo is None:
             return
         selected_fit = "—"
-        if self._selectable and self.file_combo.currentIndex() >= 0:
-            chosen = self._selectable[self.file_combo.currentIndex()]
-            selected_fit = compute_hardware_fit(chosen.total_size) or "—"
+        selected_detail = ""
+        current = self.file_combo.currentIndex()
+        if self._selectable and current >= 0:
+            chosen = self._selectable[current]
+            selected_files = [repo.files[i] for i in chosen.indices]
+            selected = compute_hardware_fit(selected_files)
+            if selected:
+                selected_fit = selected.summary()
+                selected_detail = "\n" + selected.detail()
         self.repo_meta.setText(
             f"Repo: {repo.repo_id}\n"
             f"License: {repo.license or '—'}\n"
             f"Base: {repo.base_model or '—'}\n"
             f"Tags: {', '.join(repo.tags) if repo.tags else '—'}\n"
             f"Gated: {'yes' if repo.gated else 'no'}   Private: {'yes' if repo.private else 'no'}\n"
-            f"Selected fit: {selected_fit}"
+            f"Selected quant fit: {selected_fit}{selected_detail}"
         )
+        self._select_quant_fit_row(current)
+
+    def _refresh_quant_fit_table(self) -> None:
+        repo = self._selected_repo
+        self._syncing_quant_table = True
+        self.quant_fit_table.setRowCount(0)
+        if repo is None:
+            self._syncing_quant_table = False
+            return
+        self.quant_fit_table.setRowCount(len(self._selectable))
+        for row, entry in enumerate(self._selectable):
+            selected_files = [repo.files[i] for i in entry.indices]
+            fit = compute_hardware_fit(selected_files)
+            values = [
+                entry.quant or "—",
+                _size(entry.total_size),
+                fit.summary() if fit else "—",
+                *self._context_columns(fit),
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if fit:
+                    item.setToolTip(fit.detail())
+                self.quant_fit_table.setItem(row, col, item)
+        self.quant_fit_table.resizeRowsToContents()
+        self._syncing_quant_table = False
+        self._select_quant_fit_row(self.file_combo.currentIndex())
+
+    def _context_columns(self, fit) -> list[str]:
+        if not fit:
+            return ["—", "—", "—", "—"]
+        return [f"{ctx.tier} · {_size(ctx.required_bytes)}" for ctx in fit.contexts]
+
+    def _select_quant_fit_row(self, row: int) -> None:
+        if row < 0 or row >= self.quant_fit_table.rowCount():
+            return
+        self._syncing_quant_table = True
+        self.quant_fit_table.selectRow(row)
+        self._syncing_quant_table = False
+
+    def _on_quant_table_selection(self) -> None:
+        if self._syncing_quant_table:
+            return
+        row = self.quant_fit_table.currentRow()
+        if row >= 0 and row != self.file_combo.currentIndex():
+            self.file_combo.setCurrentIndex(row)
 
     def _on_file_changed(self, index: int) -> None:
         """Update download button and split warning when the combo selection changes."""
@@ -459,6 +543,7 @@ class DiscoverPage(PageBase):
         companion_paths = [
             str(dest_dir / Path(repo.files[i].name).name) for i in indices
         ]
+        selected_fit = compute_hardware_fit([repo.files[i] for i in indices])
         cards_dir = str(default_paths().cards_dir)
         token = self._token()
 
@@ -485,6 +570,8 @@ class DiscoverPage(PageBase):
                 hf_token=token,
             )
             job_id = self._download_manager.enqueue(request)
+            if selected_fit and not hf_file.is_multimodal_projector and "mtp" not in hf_file.name.lower() and "draft" not in hf_file.name.lower():
+                self._recommended_fits_by_job[job_id] = selected_fit
             any_queued = True
             row = self._add_queue_row(job_id, label)
             self._rows_by_id[job_id] = row
@@ -545,6 +632,7 @@ class DiscoverPage(PageBase):
             else:
                 row.set_status("done")
                 row.set_cancel_enabled(False)
+                self._offer_recommended_profile(result, self._recommended_fits_by_job.pop(job_id, None))
         # When the queue empties with at least one successful download,
         # navigate to the library page once so the user can see the new
         # models. Use the last finished job's path; the Library page will
@@ -557,6 +645,44 @@ class DiscoverPage(PageBase):
             self._pending_navigate = False
             self.setProperty("pending_library_model_path", result.path)
             self.navigate_requested.emit("library")
+
+    def _offer_recommended_profile(self, model: LocalModel, fit) -> None:
+        if fit is None:
+            return
+        recommendation = recommended_profile_settings(fit)
+        reply = QMessageBox.question(
+            self,
+            "Create recommended profile?",
+            "Create a sensible default profile for this model?\n\n"
+            f"{recommendation.rationale}\n\n"
+            + "\n".join(f"{key}: {value}" for key, value in recommendation.settings.items()),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        profile = self._build_recommended_profile(model, recommendation.settings)
+        self._profile_store.upsert(profile)
+        self._profile_store.set_default(profile.id)
+
+    def _build_recommended_profile(self, model: LocalModel, values: dict[str, object]) -> ModelProfile:
+        settings = SettingValueMap()
+        user_set: set[str] = set()
+        for option_id, value in values.items():
+            option = LLAMA_OPTION_CATALOG.get(option_id)
+            if option is None:
+                continue
+            settings = settings.with_value(option, value)
+            user_set.add(option_id)
+        return ModelProfile(
+            id=f"recommended-{uuid.uuid4().hex}",
+            model_id=model.id,
+            name="Recommended",
+            settings=settings,
+            preset_origin="Hardware recommendation",
+            is_default=True,
+            user_set=user_set,
+        )
 
     @Slot(int, int)
     def _on_queue_changed(self, active: int, pending: int) -> None:
