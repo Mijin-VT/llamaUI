@@ -573,11 +573,17 @@ class DashboardPage(PageBase):
 
     @staticmethod
     def _loaded_model_id(router_models: list[dict]) -> str | None:
+        # Old format: status: {value: "loaded"|"unloaded"}
         for model in router_models:
             if DashboardPage._model_state(model) == "loaded":
                 model_id = model.get("id")
                 if isinstance(model_id, str):
                     return model_id
+        # New format (no status field): first model with an id is active
+        if router_models:
+            model_id = router_models[0].get("id")
+            if isinstance(model_id, str):
+                return model_id
         return None
 
     @staticmethod
@@ -621,19 +627,18 @@ class DashboardPage(PageBase):
 
     @staticmethod
     def _current_model_name(router_models: list[dict], api_model_path: str | None, status_model_path: str | None) -> str:
-        # In router mode, /models entries have status: {value: "loaded"|"unloaded", args: [...]}
-        # Pick the first loaded model.
+        # Old format: pick the first model with status.value == "loaded"
         for model in router_models:
             state = DashboardPage._model_state(model)
             if state == "loaded":
                 model_id = model.get("id")
                 if model_id:
                     return str(model_id)
-        # /props or /health model_path (works for single-model mode)
+        # /props or /health model_path (works for single-model and new router)
         for model_path in (api_model_path, status_model_path):
             if model_path and model_path != "none" and Path(model_path).suffix:
                 return Path(model_path).name
-        # Fallback: first model with any id
+        # New format (no status field) or fallback: first model with an id
         for model in router_models:
             model_id = model.get("id")
             if model_id:
