@@ -323,11 +323,15 @@ def build_argv(
         # schema. clean_raw_args (same code path as the load-time
         # migration) drops catalog flags and natural-default pairs.
         argv.extend(clean_raw_args(profile.raw_args))
-    # Always enable /metrics for dashboard monitoring (local and remote).
-    # Force-inject so existing profiles/configs with metrics=false are
-    # overridden.  Remove any earlier --metrics / --no-metrics first.
-    argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
-    argv.append("--metrics")
+    # Enable /metrics for dashboard monitoring. In router mode the /metrics
+    # endpoint is proxied to a model, causing the router to self-poll every
+    # ~2 s which triggers model loads and LRU eviction cycles.  Skip it for
+    # router mode — the dashboard reads metrics from controller log state
+    # instead.  For single-model mode, force-inject so existing profiles
+    # with metrics=false are overridden.
+    if not config.router_mode:
+        argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
+        argv.append("--metrics")
     return argv
 class LlamaServerController:
     """Owns a local llama-server subprocess.
