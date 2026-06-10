@@ -225,6 +225,8 @@ def generate_models_preset(
         if not mmproj_written and model.mmproj_path:
             entries.append(f"mmproj = {model.mmproj_path}")
 
+        # Always enable metrics for dashboard monitoring.
+        entries.append("metrics = true")
         section_name = model_path.stem
         section = f"[{section_name}]\n" + "\n".join(entries)
         sections.append(section)
@@ -309,6 +311,11 @@ def build_argv(
         # schema. clean_raw_args (same code path as the load-time
         # migration) drops catalog flags and natural-default pairs.
         argv.extend(clean_raw_args(profile.raw_args))
+    # Always enable /metrics for dashboard monitoring (local and remote).
+    # Force-inject so existing profiles/configs with metrics=false are
+    # overridden.  Remove any earlier --metrics / --no-metrics first.
+    argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
+    argv.append("--metrics")
     return argv
 class LlamaServerController:
     """Owns a local llama-server subprocess.
