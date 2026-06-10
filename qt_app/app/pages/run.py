@@ -41,7 +41,7 @@ from ..services.option_schema import (
     SchemaCache,
     build_runtime_schema,
 )
-from ..services.runtime import LlamaServerController, ServerState, build_argv, generate_models_preset
+from ..services.runtime import LlamaServerController, ServerState, build_argv, generate_models_preset, is_port_available
 from ..services.runtime_api import LlamaServerApiClient
 from ..widgets.buttons import DangerButton, FilterPill, SecondaryButton, SuccessButton
 from ..widgets.cards import Card, CardTitle, ElidedLabel, FieldTile, OptionCard
@@ -799,9 +799,6 @@ class RunPage(PageBase):
     def _on_mode_changed(self, index: int) -> None:
         is_router = index == 1
         config = self.config_store.load()
-        # Stop server if running when switching modes
-        if self.controller.status.is_running:
-            self._stop()
         config.router_mode = is_router
         self.config_store.save(config)
         self._apply_mode_visibility()
@@ -1705,6 +1702,9 @@ class RunPage(PageBase):
             model = self._selected_model()
             profile = self._selected_profile()
             host, port = self._effective_host_port()
+            if not is_port_available(host, port) and self.controller.try_attach(host, port):
+                self.status.setText(f"Attached to existing llama-server on {host}:{port}")
+                return
             status = self.controller.start(
                 self._argv(),
                 host,

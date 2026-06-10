@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
@@ -33,6 +33,19 @@ class ApiStatus:
     model_path: Optional[str] = None
     total_slots: Optional[int] = None
     model_load_supported: bool = False
+    slots_idle: Optional[int] = None
+    slots_processing: Optional[int] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RuntimeMetrics:
+    """Parsed llama-server runtime metrics from Prometheus-style /metrics text."""
+    reachable: bool
+    values: dict[str, float] = field(default_factory=dict)
     error: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +88,35 @@ def _get_json(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[dic
         return None, str(exc)
     except json.JSONDecodeError as exc:
         return None, f"Invalid JSON: {exc}"
+
+
+def _get_text(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
+    """GET *url*, return ``(text, None)`` or ``(None, error_string)``."""
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"Accept": "text/plain"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode("utf-8", errors="replace"), None
+    except (urllib.error.URLError, OSError) as exc:
+        return None, str(exc)
+
+
+def _parse_prometheus_metrics(text: str) -> dict[str, float]:
+    """Parse numeric samples from Prometheus text exposition."""
+    values: dict[str, float] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name_part, sep, value_part = line.partition(" ")
+        if not sep:
+            continue
+        metric_name = name_part.split("{", 1)[0].replace(":", "_")
+        try:
+            value = float(value_part.split(None, 1)[0])
+        except (IndexError, ValueError):
+            continue
+        values[metric_name] = values.get(metric_name, 0.0) + value
+    return values
 
 
 def _post_json(
@@ -152,11 +194,20 @@ class LlamaServerApiClient:
             health=status_str,
             model_path=body.get("model_path") if isinstance(body, dict) else None,
             total_slots=body.get("total_slots") if isinstance(body, dict) else None,
+            slots_idle=body.get("slots_idle") if isinstance(body, dict) else None,
+            slots_processing=body.get("slots_processing") if isinstance(body, dict) else None,
         )
 
-    def fetch_props(self) -> ApiStatus:
-        """GET /props — enriches ApiStatus with server properties."""
-        body, err = _get_json(f"{self.base_url}/props", timeout=self.timeout)
+    def fetch_props(self, model: str | None = None) -> ApiStatus:
+        """GET /props — enriches ApiStatus with server properties.
+
+        In router mode, pass *model* to get per-model props via
+        ``/props?model=<id>``.
+        """
+        url = f"{self.base_url}/props"
+        if model:
+            url += f"?model={urllib.parse.quote(model, safe='')}"
+        body, err = _get_json(url, timeout=self.timeout)
         if err is not None:
             return ApiStatus(reachable=False, error=err)
 
@@ -166,6 +217,13 @@ class LlamaServerApiClient:
             model_path=body.get("model_path") if isinstance(body, dict) else None,
             total_slots=body.get("total_slots") if isinstance(body, dict) else None,
         )
+
+    def fetch_metrics(self) -> RuntimeMetrics:
+        """GET /metrics — return parsed Prometheus counters/gauges."""
+        text, err = _get_text(f"{self.base_url}/metrics", timeout=self.timeout)
+        if err is not None:
+            return RuntimeMetrics(reachable=False, error=err)
+        return RuntimeMetrics(reachable=True, values=_parse_prometheus_metrics(text or ""))
 
     # -- model load detection ------------------------------------------------
 
@@ -267,6 +325,25 @@ class LlamaServerApiClient:
             message=f"Model switch failed: {error_detail}",
         )
 
+    def fetch_slots(self, model: str | None = None) -> list[dict]:
+        """GET /slots — return slot state rows when llama-server exposes them.
+
+        In router mode, pass *model* to query via ``/slots?model=<id>``.
+        """
+        url = f"{self.base_url}/slots"
+        if model:
+            url += f"?model={urllib.parse.quote(model, safe='')}"
+        body, err = _get_json(url, timeout=self.timeout)
+        if err is not None:
+            return []
+        if isinstance(body, list):
+            return [slot for slot in body if isinstance(slot, dict)]
+        if isinstance(body, dict):
+            slots = body.get("slots")
+            if isinstance(slots, list):
+                return [slot for slot in slots if isinstance(slot, dict)]
+        return []
+
     # -- router mode model management ----------------------------------------
 
     def list_loaded_models(self) -> list[dict]:
@@ -326,4 +403,4 @@ class LlamaServerApiClient:
         return False, msg
 
 
-__all__ = ["ApiStatus", "HealthStatus", "LlamaServerApiClient", "SwitchResult"]
+__all__ = ["ApiStatus", "HealthStatus", "LlamaServerApiClient", "RuntimeMetrics", "SwitchResult"]

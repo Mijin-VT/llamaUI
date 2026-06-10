@@ -106,6 +106,10 @@ class SettingsPage(PageBase):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
         layout.addWidget(CardTitle("Connection Settings", card))
+        hint = QLabel("Local host/port are used for launching and attaching to the local llama-server.", card)
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         form = QFormLayout()
         form.setHorizontalSpacing(16)
@@ -121,6 +125,20 @@ class SettingsPage(PageBase):
         self._port_input.setRange(1, 65535)
         self._port_input.setValue(self._config.port if self._config else 8080)
         form.addRow("Port", self._port_input)
+
+        self._remote_monitor_check = QCheckBox("Monitor a remote llama-server instead on Dashboard", card)
+        self._remote_monitor_check.setChecked(self._config.remote_monitor_enabled if self._config else False)
+        form.addRow("", self._remote_monitor_check)
+
+        self._remote_host_input = QLineEdit(card)
+        self._remote_host_input.setText(self._config.remote_monitor_host if self._config else "127.0.0.1")
+        self._remote_host_input.setMinimumWidth(200)
+        form.addRow("Remote monitor host", self._remote_host_input)
+
+        self._remote_port_input = QSpinBox(card)
+        self._remote_port_input.setRange(1, 65535)
+        self._remote_port_input.setValue(self._config.remote_monitor_port if self._config else 8080)
+        form.addRow("Remote monitor port", self._remote_port_input)
 
         layout.addLayout(form)
         self._layout.addWidget(card)
@@ -353,6 +371,9 @@ class SettingsPage(PageBase):
             router_mode=self._router_mode_check.isChecked() if hasattr(self, '_router_mode_check') else (self._config.router_mode if self._config else False),
             selected_model_id=self._config.selected_model_id if self._config else None,
             selected_profile_id=self._config.selected_profile_id if self._config else None,
+            remote_monitor_enabled=self._remote_monitor_check.isChecked(),
+            remote_monitor_host=self._remote_host_input.text().strip() or "127.0.0.1",
+            remote_monitor_port=self._remote_port_input.value(),
         )
 
     # ------------------------------------------------------------------

@@ -8,6 +8,8 @@ This module is UI-independent. Qt signals / UI wiring live in the app layer.
 """
 from __future__ import annotations
 
+import json
+
 import os
 import re
 import signal
@@ -100,6 +102,10 @@ class LogBuffer:
     def __len__(self) -> int:
         with self._lock:
             return len(self._lines)
+
+    def extend(self, lines: Sequence[LogLine]) -> None:
+        with self._lock:
+            self._lines.extend(lines)
 
 
 LogCallback = Callable[[LogLine], None]
@@ -326,6 +332,9 @@ class LlamaServerController:
         # from a previous process can never bleed into the new log
         # buffer after a restart.
         self._log_session = 0
+        self._log_path = default_data_dir() / "runtime_logs.jsonl"
+        self._raw_log_path = default_data_dir() / "llama-server.log"
+        self._log_file_handle = None
 
 
     def _status_copy_unlocked(self) -> RuntimeStatus:
@@ -358,6 +367,7 @@ class LlamaServerController:
         with self._lock:
             self._log_session += 1
             self.log_buffer.clear()
+            self._load_persisted_logs()
             self._api_client = client
             self._status = RuntimeStatus(
                 state=ServerState.HEALTHY,
@@ -368,6 +378,8 @@ class LlamaServerController:
                 profile_name=None,
                 api_status=api_status,
             )
+            if self._raw_log_path.is_file():
+                self._start_tail_reader(self._raw_log_path, self._log_session, start_at_end=True)
             self._start_health_poll(host, port)
         return True
 
@@ -397,6 +409,10 @@ class LlamaServerController:
             # log buffer. See _start_reader / _emit.
             self._log_session += 1
             self.log_buffer.clear()
+            self._truncate_persisted_logs()
+            self._raw_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._raw_log_path.write_text("", encoding="utf-8")
+            self._log_file_handle = self._raw_log_path.open("a", encoding="utf-8", buffering=1)
             self._status = RuntimeStatus(
                 state=ServerState.STARTING,
                 command=list(argv),
@@ -408,8 +424,8 @@ class LlamaServerController:
             try:
                 self._process = subprocess.Popen(
                     argv,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stdout=self._log_file_handle,
+                    stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
                     # Run in its own session so we can kill the
@@ -425,8 +441,7 @@ class LlamaServerController:
 
             self._status.state = ServerState.RUNNING
             self._status.pid = self._process.pid
-            self._start_reader("stdout", self._process.stdout, self._log_session)
-            self._start_reader("stderr", self._process.stderr, self._log_session)
+            self._start_tail_reader(self._raw_log_path, self._log_session)
             self._start_health_poll(host, port)
             return self._status_copy_unlocked()
     def stop(
@@ -555,6 +570,9 @@ class LlamaServerController:
             self._status.exit_code = proc.returncode
             self._status.pid = None
             self._process = None
+            if self._log_file_handle is not None:
+                self._log_file_handle.close()
+                self._log_file_handle = None
             self._api_client = None
             return self._status_copy_unlocked()
 
@@ -708,6 +726,41 @@ class LlamaServerController:
             self._status.exit_code = self._process.returncode
             self._status.pid = None
 
+    def _load_persisted_logs(self) -> None:
+        try:
+            if not self._log_path.is_file():
+                return
+            loaded: list[LogLine] = []
+            with self._log_path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    try:
+                        item = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    source = item.get("source")
+                    text = item.get("text")
+                    timestamp = item.get("timestamp")
+                    if source in {"stdout", "stderr"} and isinstance(text, str) and isinstance(timestamp, str):
+                        loaded.append(LogLine(source=source, text=text, timestamp=timestamp))
+            self.log_buffer.extend(loaded[-10_000:])
+        except OSError:
+            return
+
+    def _truncate_persisted_logs(self) -> None:
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log_path.write_text("", encoding="utf-8")
+        except OSError:
+            return
+
+    def _persist_log(self, line: LogLine) -> None:
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(line.__dict__, ensure_ascii=False) + "\n")
+        except OSError:
+            return
+
     def _emit(self, line: LogLine, session: int) -> None:
         # Stale lines from a previous process (reader thread still
         # draining the old pipe) are dropped here. Without this guard
@@ -716,8 +769,34 @@ class LlamaServerController:
         if session != self._log_session:
             return
         self.log_buffer.append(line)
+        self._persist_log(line)
         if self.on_log:
             self.on_log(line)
+
+    def _start_tail_reader(self, path: Path, session: int, start_at_end: bool = False) -> None:
+        def run() -> None:
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    if start_at_end:
+                        handle.seek(0, os.SEEK_END)
+                    while session == self._log_session:
+                        raw = handle.readline()
+                        if raw:
+                            self._emit(LogLine(source="stdout", text=raw.rstrip()), session)
+                            continue
+                        with self._lock:
+                            proc = self._process
+                            running = self._status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}
+                        if proc is not None and proc.poll() is not None:
+                            return
+                        if proc is None and not running:
+                            return
+                        time.sleep(0.2)
+            except OSError:
+                return
+
+        t = threading.Thread(target=run, name="llama-server-log-tail", daemon=True)
+        t.start()
 
     def _start_reader(self, source: str, pipe, session: int) -> None:
         if pipe is None:

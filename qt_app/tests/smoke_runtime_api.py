@@ -24,6 +24,7 @@ from app.services.runtime_api import (  # noqa: E402
     ApiStatus,
     HealthStatus,
     LlamaServerApiClient,
+    RuntimeMetrics,
     SwitchResult,
 )
 
@@ -56,9 +57,17 @@ class _FakeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text(self, code: int, text: str) -> None:
+        body = text.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         if self.path == "/health":
-            health_obj: dict[str, Any] = {"status": "ok"}
+            health_obj: dict[str, Any] = {"status": "ok", "slots_idle": 2, "slots_processing": 1}
             if _FakeHandler.loaded_model:
                 health_obj["model_path"] = _FakeHandler.loaded_model
             self._send_json(200, health_obj)
@@ -70,6 +79,21 @@ class _FakeHandler(BaseHTTPRequestHandler):
             if _FakeHandler.loaded_model:
                 props_obj["model_path"] = _FakeHandler.loaded_model
             self._send_json(200, props_obj)
+        elif self.path == "/metrics":
+            self._send_text(
+                200,
+                "\n".join(
+                    (
+                        "# HELP llamacpp:tokens_predicted_total Predicted tokens",
+                        "llamacpp:tokens_predicted_total 42",
+                        'llamacpp:tokens_evaluated_total{model="test"} 12',
+                        'llamacpp:slot_state{slot_id="0"} 1',
+                        'llamacpp:slot_state{slot_id="1"} 0',
+                    )
+                ),
+            )
+        elif self.path == "/slots":
+            self._send_json(200, [{"id": 0, "is_processing": True}, {"id": 1, "is_processing": False}])
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -208,13 +232,40 @@ def test_status_combined_probe() -> None:
     print()
 
 
+def test_metrics() -> None:
+    """Prometheus /metrics text and /slots rows are parsed."""
+    print("test_metrics:")
+    server, port = _start_server()
+    try:
+        client = LlamaServerApiClient(port=port, timeout=2.0)
+        metrics = client.fetch_metrics()
+        check(metrics.reachable, "metrics reachable")
+        check(metrics.values["llamacpp_tokens_predicted_total"] == 42.0, "colon metric name normalized")
+        check(metrics.values["llamacpp_tokens_evaluated_total"] == 12.0, "labels ignored")
+        check(metrics.values["llamacpp_slot_state"] == 1.0, "duplicate labelled metrics summed")
+        slots = client.fetch_slots()
+        check(len(slots) == 2, "slots parsed")
+        check(slots[0]["is_processing"] is True, "slot active state parsed")
+        health = client.check_health()
+        check(health.slots_idle == 2, "health slots_idle parsed")
+        check(health.slots_processing == 1, "health slots_processing parsed")
+    finally:
+        server.shutdown()
+    print()
+
+
 def test_dataclass_serialization() -> None:
-    """ApiStatus and SwitchResult have working to_dict."""
+    """ApiStatus, RuntimeMetrics and SwitchResult have working to_dict."""
     print("test_dataclass_serialization:")
     s = ApiStatus(reachable=True, health="ok")
     d = s.to_dict()
     check(isinstance(d, dict), "ApiStatus.to_dict → dict")
     check(d["reachable"] is True, "reachable in dict")
+
+    m = RuntimeMetrics(reachable=True, values={"tokens": 3.0})
+    md = m.to_dict()
+    check(isinstance(md, dict), "RuntimeMetrics.to_dict → dict")
+    check(md["values"]["tokens"] == 3.0, "metrics values in dict")
 
     r = SwitchResult(switched=True, restart_required=False, unreachable=False, message="ok")
     rd = r.to_dict()
@@ -233,6 +284,7 @@ def main() -> int:
     test_switch_model_api_supported()
     test_switch_model_api_unsupported()
     test_status_combined_probe()
+    test_metrics()
     test_dataclass_serialization()
     print("All runtime_api smoke tests passed.")
     return 0

@@ -43,6 +43,9 @@ class AppConfig:
     router_mode: bool = False
     selected_model_id: Optional[str] = None
     selected_profile_id: Optional[str] = None
+    remote_monitor_enabled: bool = False
+    remote_monitor_host: str = "127.0.0.1"
+    remote_monitor_port: int = 8080
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -55,6 +58,9 @@ class AppConfig:
             "selected_model_id": self.selected_model_id,
             "selected_profile_id": self.selected_profile_id,
             "global_settings": self.global_settings.to_json(),
+            "remote_monitor_enabled": self.remote_monitor_enabled,
+            "remote_monitor_host": self.remote_monitor_host,
+            "remote_monitor_port": self.remote_monitor_port,
         }
 
     @classmethod
@@ -71,6 +77,9 @@ class AppConfig:
             router_mode=bool(data.get("router_mode", False)),
             selected_model_id=data.get("selected_model_id") if isinstance(data.get("selected_model_id"), str) else None,
             selected_profile_id=data.get("selected_profile_id") if isinstance(data.get("selected_profile_id"), str) else None,
+            remote_monitor_enabled=bool(data.get("remote_monitor_enabled", False)),
+            remote_monitor_host=str(data.get("remote_monitor_host") or "127.0.0.1"),
+            remote_monitor_port=int(data.get("remote_monitor_port") or 8080),
         )
 
 
