@@ -151,6 +151,7 @@ class DashboardPage(PageBase):
         self._config_store = ConfigStore.default()
         self._metrics: deque[dict] = deque(maxlen=120)
         self._last_counter_sample: tuple[float, float, float] | None = None
+        self._smoothed_tps: float = 0.0
         super().__init__(parent)
 
     def set_controller(self, controller: LlamaServerController) -> None:
@@ -343,7 +344,7 @@ class DashboardPage(PageBase):
             "reachable": bool(api and api.reachable),
             "health": api.health if api else None,
             "latency_ms": elapsed_ms if api and api.reachable else 0.0,
-            "tokens_per_second": prompt_tps + generation_tps,
+            "tokens_per_second": self._smooth_tps(prompt_tps + generation_tps, now),
             "prompt_tokens_per_second": prompt_tps,
             "generation_tokens_per_second": generation_tps,
             "prompt_tokens": prompt_tokens,
@@ -614,6 +615,19 @@ class DashboardPage(PageBase):
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         return max(0.0, (now - timestamp).total_seconds())
+
+    def _smooth_tps(self, raw_tps: float, now: float) -> float:
+        """Exponential moving average that decays over ~6 seconds.
+
+        Instantaneous counter-delta rates spike then hard-drop to zero
+        between generation bursts.  Smoothing makes the chart readable.
+        """
+        alpha = 0.35
+        self._smoothed_tps = alpha * raw_tps + (1 - alpha) * self._smoothed_tps
+        # Snap to zero if below noise floor (avoids perpetual 0.1 t/s).
+        if self._smoothed_tps < 0.5:
+            self._smoothed_tps = 0.0
+        return self._smoothed_tps
 
     @staticmethod
     def _metric_counter(runtime_metrics: RuntimeMetrics | None, *names: str) -> float:
