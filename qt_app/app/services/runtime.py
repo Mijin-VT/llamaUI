@@ -326,20 +326,14 @@ def build_argv(
         # schema. clean_raw_args (same code path as the load-time
         # migration) drops catalog flags and natural-default pairs.
         argv.extend(clean_raw_args(profile.raw_args))
-    # Enable /metrics for dashboard monitoring. In router mode the /metrics
-    # endpoint is proxied to a model, causing the router to self-poll every
-    # ~2 s which triggers model loads and LRU eviction cycles.  Skip it for
-    # router mode — the dashboard reads metrics from controller log state
-    # instead.  For single-model mode, force-inject so existing profiles
-    # with metrics=false are overridden.
-    if not config.router_mode:
-        argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
-        argv.append("--metrics")
-    else:
-        # Router mode: the router has an internal self-poll loop (~2 s) that
-        # hits proxied endpoints.  With models_autoload=true (the default),
-        # every poll triggers model loads and LRU eviction cycles.  Disable
-        # autoload — the user manages models through the Loaded Models panel.
+    # Always enable /metrics so the dashboard can fetch metrics.
+    # Force-inject to override existing profiles with metrics=false.
+    argv = [a for a in argv if a not in ("--metrics", "--no-metrics")]
+    argv.append("--metrics")
+    # Router mode: disable autoload to prevent the router's internal
+    # self-poll loop from triggering model loads and LRU eviction.
+    # The user manages models through the Loaded Models panel.
+    if config.router_mode:
         argv = [a for a in argv if a not in ("--no-models-autoload",)]
         argv.append("--no-models-autoload")
     return argv

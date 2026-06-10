@@ -471,45 +471,44 @@ class DashboardPage(PageBase):
 
     def _monitor_status_and_metrics(self) -> tuple[RuntimeStatus, RuntimeMetrics | None]:
         config = self._config_store.load()
-        if config.router_mode and not config.remote_monitor_enabled:
-            status = self._controller.status if self._controller else RuntimeStatus(
+
+        # Remote monitor mode — connect to an arbitrary server.
+        if config.remote_monitor_enabled:
+            host = config.remote_monitor_host
+            port = config.remote_monitor_port
+            from ..services.runtime_api import LlamaServerApiClient
+            client = LlamaServerApiClient(host, port)
+            metrics = client.fetch_metrics()
+            state = ServerState.HEALTHY if metrics and metrics.reachable else ServerState.UNHEALTHY
+            return RuntimeStatus(
+                state=state,
+                host=host,
+                port=port,
+                model_path=None,
+                api_status=ApiStatus(
+                    reachable=bool(metrics and metrics.reachable),
+                    health="ok" if metrics and metrics.reachable else "unreachable",
+                ),
+            ), metrics
+
+        # Local mode (single-model or router).
+        if not self._controller:
+            return RuntimeStatus(
                 state=ServerState.STOPPED,
                 host=config.host,
                 port=config.port,
                 model_path=None,
                 api_status=None,
-            )
-            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-                status.api_status = ApiStatus(reachable=True, health="router")
-            return status, None
+            ), None
 
-        if not config.remote_monitor_enabled and self._controller:
-            status = self._controller.status
-            client = self._controller._api_client
-            metrics = client.fetch_metrics() if client else None
-            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-                status.api_status = ApiStatus(
-                    reachable=bool(metrics and metrics.reachable),
-                    health="ok" if metrics and metrics.reachable else "unreachable",
-                )
-            return status, metrics
-
-        host = config.remote_monitor_host if config.remote_monitor_enabled else config.host
-        port = config.remote_monitor_port if config.remote_monitor_enabled else config.port
-        from ..services.runtime_api import LlamaServerApiClient
-        client = LlamaServerApiClient(host, port)
-        metrics = client.fetch_metrics()
-        state = ServerState.HEALTHY if metrics and metrics.reachable else ServerState.UNHEALTHY
-        status = RuntimeStatus(
-            state=state,
-            host=host,
-            port=port,
-            model_path=None,
-            api_status=ApiStatus(
+        status = self._controller.status
+        client = self._controller._api_client
+        metrics = client.fetch_metrics() if client else None
+        if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+            status.api_status = ApiStatus(
                 reachable=bool(metrics and metrics.reachable),
                 health="ok" if metrics and metrics.reachable else "unreachable",
-            ),
-        )
+            )
         return status, metrics
 
     def _token_rates(self, timestamp: float, prompt_tokens: float, generated_tokens: float) -> tuple[float, float]:
