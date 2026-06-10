@@ -503,7 +503,33 @@ class DashboardPage(PageBase):
 
         status = self._controller.status
         client = self._controller._api_client
-        metrics = client.fetch_metrics() if client else None
+        if not client:
+            return status, None
+
+        # Router mode: /metrics requires ?model=<name>.  Discover the
+        # first loaded model and target it explicitly.  With
+        # --no-models-autoload these calls are safe — no loads/evictions.
+        if config.router_mode:
+            loaded = client.list_loaded_models()
+            loaded_id = None
+            for m in loaded:
+                s = m.get("status") or m.get("state") or ""
+                # Router returns status as {"value": "loaded"} or bare string.
+                if isinstance(s, dict):
+                    s = s.get("value", "")
+                if s in ("loaded", "loading"):
+                    loaded_id = m.get("id")
+                    break
+            metrics = client.fetch_metrics(model=loaded_id) if loaded_id else None
+            if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
+                if metrics and metrics.reachable:
+                    status.api_status = ApiStatus(reachable=True, health="ok")
+                else:
+                    status.api_status = ApiStatus(reachable=True, health="no model loaded")
+            return status, metrics
+
+        # Single-model mode: /metrics works without a model parameter.
+        metrics = client.fetch_metrics()
         if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
             status.api_status = ApiStatus(
                 reachable=bool(metrics and metrics.reachable),
