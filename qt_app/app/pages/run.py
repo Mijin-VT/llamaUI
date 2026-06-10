@@ -1793,15 +1793,18 @@ class RunPage(PageBase):
 
     def _poll_status(self) -> None:
         status = self.controller.status
+        config = self.config_store.load()
         if status.state in {ServerState.RUNNING, ServerState.HEALTHY, ServerState.UNHEALTHY}:
-            self.controller.poll_health()
-            status = self.controller.status
-            config = self.config_store.load()
-            # Poll loaded models less frequently (every 3rd tick ≈ 15 s).
             if config.router_mode:
-                self._router_poll_tick = getattr(self, "_router_poll_tick", 0) + 1
-                if self._router_poll_tick % 3 == 1:
-                    self._poll_router_models()
+                # Router endpoints are not passive health/status probes in
+                # llama-server: /health and /models can be proxied to a model
+                # and trigger lazy loads / LRU eviction. In router mode the UI
+                # observes only the process/log stream; clients are the only
+                # HTTP traffic allowed to touch the router.
+                status = self.controller.status
+            else:
+                self.controller.poll_health()
+                status = self.controller.status
         self._set_status(status)
         self._render_logs()
         self.inspector_changed.emit({

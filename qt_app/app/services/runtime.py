@@ -363,20 +363,26 @@ class LlamaServerController:
             self._sync_state()
             return RuntimeStatus(**self._status.__dict__)
 
-    def try_attach(self, host: str, port: str, router_mode: bool = False) -> bool:
+    def try_attach(self, host: str, port: int, router_mode: bool = False) -> bool:
         """Try to attach to an already-running llama-server on *host*:*port*.
-        Returns True if a healthy llama-server was found and the controller
-        is now attached (state = HEALTHY).  Returns False if nothing was
-        found — the caller should ``start()`` a fresh server.
-        On attach, the controller does NOT own the process (``_process`` is
-        ``None``), so ``stop()`` will need to discover the PID via
-        ``lsof``/``ss``.  Health polling is started so the UI updates live.
+        In router mode this must be non-invasive: even /health can be proxied
+        to a model and trigger lazy loads/LRU eviction, so a TCP connect is the
+        only probe.
         """
         self.router_mode = router_mode
         client = LlamaServerApiClient(host=host, port=port, timeout=2.0, router_mode=router_mode)
-        api_status = client.status()
-        if not api_status.reachable:
-            return False
+        if router_mode:
+            try:
+                connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+                with socket.create_connection((connect_host, port), timeout=1.0):
+                    pass
+            except OSError:
+                return False
+            api_status = ApiStatus(reachable=True, health="router")
+        else:
+            api_status = client.status()
+            if not api_status.reachable:
+                return False
 
         with self._lock:
             self._log_session += 1
@@ -839,6 +845,13 @@ class LlamaServerController:
             host=host, port=port, timeout=_HEALTH_TIMEOUT,
             router_mode=self.router_mode,
         )
+
+        if self.router_mode:
+            # Router mode endpoints are active: /health and /models can trigger
+            # lazy model loads and LRU eviction. Keep the API client for manual
+            # actions, but do not start an automatic HTTP polling thread.
+            self._health_thread = None
+            return
 
         def loop() -> None:
             while not new_stop.wait(_HEALTH_INTERVAL):
