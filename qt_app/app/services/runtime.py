@@ -232,6 +232,11 @@ def generate_models_preset(
         if not mmproj_written and model.mmproj_path:
             entries.append(f"mmproj = {model.mmproj_path}")
 
+        # Enable /metrics on child instances so loaded models expose
+        # Prometheus-style metrics.  Children are regular llama-servers,
+        # not routers — they don't self-poll.
+        entries.append("metrics = true")
+
         section_name = model_path.stem
         section = f"[{section_name}]\n" + "\n".join(entries)
         sections.append(section)
