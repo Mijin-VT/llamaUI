@@ -395,6 +395,12 @@ class LibraryPage(PageBase):
 
     def _refresh(self) -> None:
         try:
+            scan_models_dir(self._config_store, self._library_store)
+        except Exception:
+            # A scan failure should not hide already persisted models.
+            pass
+
+        try:
             models = list(self._library_store.load())
         except Exception as exc:  # surface, don't crash the shell
             self._render_error(f"Library store failed to load: {exc}")

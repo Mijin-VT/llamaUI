@@ -1350,7 +1350,12 @@ class RunPage(PageBase):
     # ------------------------------------------------------------------
 
     def _reload_models(self) -> None:
-        from ..services.library_scan import is_companion_gguf
+        from ..services.library_scan import is_companion_gguf, scan_models_dir
+        try:
+            scan_models_dir(self.config_store, self.library_store)
+        except Exception:
+            # Fall back to whatever metadata is already persisted.
+            pass
         self._models = sorted(
             (m for m in self.library_store.load() if not is_companion_gguf(Path(m.path))),
             key=lambda m: m.path.casefold(),

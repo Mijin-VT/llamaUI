@@ -245,7 +245,7 @@ def scan_models_dir(config: ConfigStore, library: LibraryStore) -> ScanResult:
     models_dir = cfg.models_dir
     if not models_dir:
         return ScanResult(error="Models directory not configured. Set it in Settings first.")
-    return scan_library(Path(models_dir), library)
+    return scan_library(Path(models_dir).expanduser(), library)
 
 
 def read_card_cache(card_cache_path: Optional[str]) -> Optional[str]:

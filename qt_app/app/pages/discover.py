@@ -137,6 +137,11 @@ def _build_selectable(repo: HfRepoSummary) -> list[_Selectable]:
 
     return out
 
+def _is_primary_download_file(name: str, is_mmproj: bool) -> bool:
+    lower = Path(name).name.lower()
+    return not is_mmproj and "mtp" not in lower and "draft" not in lower
+
+
 
 # ---------------------------------------------------------------------------
 # Workers
@@ -194,6 +199,10 @@ class DiscoverPage(PageBase):
         self._download_manager = DownloadManager(LibraryStore.default())
         super().__init__(parent)
         self._download_manager.setParent(self)
+        self._last_downloaded_primary_path: str | None = None
+        self._primary_download_jobs: set[str] = set()
+
+
 
     def build(self) -> None:
         self.setProperty("subtitle", "HuggingFace GGUF discovery, explicit file selection, and download queue.")
@@ -580,12 +589,14 @@ class DiscoverPage(PageBase):
             else Path.home() / "Models" / "llamaUI"
         )
         dest_dir = base_dir / repo.repo_id.replace("/", "__")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
         # Build one request per individual file so the manager can run them
-        # in parallel while respecting its concurrency cap.
+        # in parallel while respecting its concurrency cap.  Only companion
+        # files belong in companion_paths; primary/MTP/draft files should not
+        # be attached as companions to themselves.
         companion_paths = [
-            str(dest_dir / Path(repo.files[i].name).name) for i in indices
+            str(dest_dir / Path(repo.files[i].name).name)
+            for i in indices
+            if repo.files[i].is_multimodal_projector
         ]
         selected_fit = compute_hardware_fit([repo.files[i] for i in indices])
         cards_dir = str(default_paths().cards_dir)
@@ -614,7 +625,10 @@ class DiscoverPage(PageBase):
                 hf_token=token,
             )
             job_id = self._download_manager.enqueue(request)
-            if selected_fit and not hf_file.is_multimodal_projector and "mtp" not in hf_file.name.lower() and "draft" not in hf_file.name.lower():
+            is_primary = _is_primary_download_file(hf_file.name, hf_file.is_multimodal_projector)
+            if is_primary:
+                self._primary_download_jobs.add(job_id)
+            if selected_fit and is_primary:
                 self._recommended_fits_by_job[job_id] = selected_fit
             any_queued = True
             row = self._add_queue_row(job_id, label)
@@ -665,6 +679,9 @@ class DiscoverPage(PageBase):
 
     @Slot(str, object)
     def _on_manager_finished(self, job_id: str, result: object) -> None:
+        if job_id in self._primary_download_jobs and isinstance(result, LocalModel):
+            self._last_downloaded_primary_path = result.path
+
         row = self._rows_by_id.get(job_id)
         if row is not None:
             if isinstance(result, DownloadCancelled):
@@ -677,18 +694,20 @@ class DiscoverPage(PageBase):
                 row.set_status("done")
                 row.set_cancel_enabled(False)
                 self._offer_recommended_profile(result, self._recommended_fits_by_job.pop(job_id, None))
-        # When the queue empties with at least one successful download,
-        # navigate to the library page once so the user can see the new
-        # models. Use the last finished job's path; the Library page will
-        # select whatever is newest.
+
+        # When the queue empties with at least one successful primary download,
+        # navigate to the library page once so the user can see/select it.
         if (
             self._pending_navigate
             and self._download_manager.active_count() == 0
-            and isinstance(result, LocalModel)
+            and self._last_downloaded_primary_path
         ):
             self._pending_navigate = False
-            self.setProperty("pending_library_model_path", result.path)
+            self._primary_download_jobs.clear()
+            self.setProperty("pending_library_model_path", self._last_downloaded_primary_path)
+            self._last_downloaded_primary_path = None
             self.navigate_requested.emit("library")
+
 
     def _offer_recommended_profile(self, model: LocalModel, fit) -> None:
         if fit is None:
