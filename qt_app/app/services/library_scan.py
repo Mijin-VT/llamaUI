@@ -109,7 +109,6 @@ class ScanResult:
     updated: int = 0
     removed: int = 0
     kept: int = 0
-    partial_downloads: int = 0
     error: Optional[str] = None
 
     @property
@@ -144,10 +143,7 @@ def scan_library(
         logger.warning("Models directory does not exist: %s", models_dir)
         return ScanResult(error=f"Directory not found: {models_dir}")
 
-    # Collect all complete .gguf files on disk. Track .gguf.part files
-    # separately so interrupted/resumable downloads are visible to the UI but
-    # never treated as runnable models.
-    partial_downloads = sum(1 for _ in models_dir.rglob("*.gguf.part"))
+    # Collect all complete .gguf files on disk.
     disk_files: dict[str, Path] = {}  # resolved path -> Path
     for gguf in models_dir.rglob("*.gguf"):
         if not _is_primary_runnable_gguf(gguf):
@@ -231,11 +227,10 @@ def scan_library(
         updated=updated,
         removed=removed,
         kept=kept,
-        partial_downloads=partial_downloads,
     )
     logger.info(
-        "Library scan complete: %d files, %d added, %d updated, %d removed, %d kept, %d partial",
-        result.scanned_files, result.added, result.updated, result.removed, result.kept, result.partial_downloads,
+        "Library scan complete: %d files, %d added, %d updated, %d removed, %d kept",
+        result.scanned_files, result.added, result.updated, result.removed, result.kept,
     )
     return result
 

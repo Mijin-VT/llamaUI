@@ -513,14 +513,7 @@ class LibraryPage(PageBase):
             self._rescan.setText("Error")
             self._detail_title.setText(f"Scan failed: {result.error}")
         else:
-            label = f"+{result.added} new"
-            if result.partial_downloads:
-                label += f" · {result.partial_downloads} partial"
-                self._detail_title.setText(
-                    f"Scan found {result.partial_downloads} incomplete download(s). "
-                    "Finish/resume them before they appear as runnable models."
-                )
-            self._rescan.setText(label)
+            self._rescan.setText(f"+{result.added} new")
         self._refresh()
         # Reset label after a moment.
         QTimer.singleShot(2000, lambda: self._rescan.setText("Rescan"))
