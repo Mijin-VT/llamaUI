@@ -249,9 +249,12 @@ class RunPage(PageBase):
         self._build_runtime_header()
         config = self.config_store.load()
         self._mode_combo.setCurrentIndex(1 if config.router_mode else 0)
-        self._apply_mode_visibility()
         self._build_main_settings()
         self._build_advanced_groups()
+        # Apply mode visibility AFTER the main/advanced cards exist, otherwise
+        # the hasattr() guards skip them and single-model widgets stay visible
+        # on startup even when config has router_mode enabled.
+        self._apply_mode_visibility()
         self._build_logs()
         self._reload_models()
         self._timer = QTimer(self)
