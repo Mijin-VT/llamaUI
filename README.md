@@ -110,18 +110,18 @@ Unit test execution commands (python -m unittest).
 <table align="center" cellpadding="10">
   <tr>
     <td align="center">
-      <img src="screenshots/CHAT.JPG" width="400">
+      <img src="screenshots/CHAT.JPG" width="500">
     </td>
     <td align="center">
-      <img src="screenshots/LIBRARY2.JPG" width="400">
+      <img src="screenshots/LIBRARY2.JPG" width="500">
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="screenshots/RUN2.JPG" width="400">
+      <img src="screenshots/RUN2.JPG" width="500">
     </td>
     <td align="center">
-      <img src="screenshots/image.png" width="400">
+      <img src="screenshots/image.png" width="500">
     </td>
   </tr>
 </table>
