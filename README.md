@@ -121,7 +121,7 @@ Unit test execution commands (python -m unittest).
       <img src="screenshots/RUN2.JPG" width="600">
     </td>
     <td align="center">
-      <img src="screenshots/image.png" width="600">
+      <img src="screenshots/image.JPG" width="600">
     </td>
   </tr>
 </table>
