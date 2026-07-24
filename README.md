@@ -84,6 +84,29 @@ A status card shows server state, model name, host:port, PID, uptime, and slots.
 
 Quick health check: Qt platform plugin and desktop session, llama-server binary presence/version/parsed options count, HuggingFace API reachability with latency and token source.
 
+## Improvements
+
+- **💬 Chat**: (Multimodal Vision, History & System Templates):
+- Complete documentation for the native Chat tab connected to /v1/chat/completions.
+- Multimodal Vision support (PNG, JPG, and base64-encoded WEBP images).
+- Persistent session history (chat_sessions.json).
+- Customizable System Prompt templates (chat_templates.json).
+- High-contrast status badges: ONLINE in bright green and OFFLINE in bright red.
+- Real-time SSE streaming with a stop button.
+- **📚 Library**: (Custom Folder Scanning & .bin Auto-Configuration):
+Recursive scanning of any system folder with depth control, hidden folders, size filtering, and folder exclusion (node_modules, .git, venv, etc.).
+Real-time multithreaded progress dialog with a cancel option.
+Automatic configuration of vision projectors using mmproj-*.bin and CLI argument parser (--ctx-size, --n-gpu-layers, --temp, --threads) from .bin files in the model folder.
+Featured action buttons: 📂 Scan Custom Folder… in green and 🔄 Rescan in light blue.
+- **⚡ Run**: (Control Center, Auto-Discovery & Safety Lock):
+Automatic Control Safety Lock: Automatically locks all sliders, spinboxes, text boxes, dropdowns, and preset buttons while the server is running (STARTING, RUNNING, HEALTHY) and automatically unlocks them when the server is stopped.
+llama-server.exe Auto-Discovery: Intelligent search engine that detects local executables without manual configuration.
+- **🏗️ Architecture**: Requirements & Unit Testing:
+Frontend in PySide6 Qt Widgets (without QML, Electron, or Tauri).
+Data persistence using versioned JSON wrappers (ConfigStore, LibraryStore, ProfileStore, ChatStore).
+Asynchronous tab navigation with deferred_refresh (0 ms lag).
+Unit test execution commands (python -m unittest).
+
 ## Architecture
 
 - **Frontend**: PySide6 Qt Widgets. No QML. Two-pane splitter layout: collapsible sidebar navigation + page stack. Runtime status lives at the bottom of the sidebar.
