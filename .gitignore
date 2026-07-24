@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# --- Qt / PySide ---
+*.qmlc
+*.jsc
+.qmlls.ini
+
+# --- App runtime data ---
+.llamaUI/
+*.log
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Misc ---
+plans/
+screenshots/
+splitter_sizes
