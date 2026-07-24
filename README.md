@@ -107,6 +107,12 @@ Data persistence using versioned JSON wrappers (ConfigStore, LibraryStore, Profi
 Asynchronous tab navigation with deferred_refresh (0 ms lag).
 Unit test execution commands (python -m unittest).
 
+<p align="center"><img src="screenshots/CHAT.JPG" width="400"></p>
+<p align="center"><img src="screenshots/LIBRARY2.JPG" width="400"></p>
+<p align="center"><img src="screenshots/RUN2.JPG" width="400"></p>
+<p align="center"><img src="screenshots/image.png" width="400"></p>
+
+
 ## Architecture
 
 - **Frontend**: PySide6 Qt Widgets. No QML. Two-pane splitter layout: collapsible sidebar navigation + page stack. Runtime status lives at the bottom of the sidebar.
