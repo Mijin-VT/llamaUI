@@ -87,12 +87,12 @@ Quick health check: Qt platform plugin and desktop session, llama-server binary 
 ## Improvements
 
 - **💬 Chat**: (Multimodal Vision, History & System Templates):
-- Complete documentation for the native Chat tab connected to /v1/chat/completions.
-- Multimodal Vision support (PNG, JPG, and base64-encoded WEBP images).
-- Persistent session history (chat_sessions.json).
-- Customizable System Prompt templates (chat_templates.json).
-- High-contrast status badges: ONLINE in bright green and OFFLINE in bright red.
-- Real-time SSE streaming with a stop button.
+Complete documentation for the native Chat tab connected to /v1/chat/completions.
+Multimodal Vision support (PNG, JPG, and base64-encoded WEBP images).
+Persistent session history (chat_sessions.json).
+Customizable System Prompt templates (chat_templates.json).
+High-contrast status badges: ONLINE in bright green and OFFLINE in bright red.
+Real-time SSE streaming with a stop button.
 - **📚 Library**: (Custom Folder Scanning & .bin Auto-Configuration):
 Recursive scanning of any system folder with depth control, hidden folders, size filtering, and folder exclusion (node_modules, .git, venv, etc.).
 Real-time multithreaded progress dialog with a cancel option.
