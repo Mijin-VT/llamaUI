@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="960" viewBox="0 0 1536 960">
+  <rect width="1536" height="960" fill="#111827"/>
+  <rect x="0" y="0" width="220" height="960" fill="#0b1220"/>
+  <text x="28" y="42" fill="#a78bfa" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700">llamaUI</text>
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="17" fill="#cbd5e1">
+    <text x="28" y="105">Library</text><text x="28" y="155" fill="#ffffff" font-weight="700">Discover</text><text x="28" y="205">Run</text><text x="28" y="255">Profiles</text><text x="28" y="305">Settings</text><text x="28" y="355">Diagnostics</text>
+  </g>
+  <rect x="220" y="0" width="1536" height="74" fill="#182235"/>
+  <text x="250" y="46" fill="#f8fafc" font-family="Inter" font-size="24" font-weight="700">Discover GGUF models</text>
+  <rect x="250" y="96" width="820" height="58" rx="12" fill="#0f172a" stroke="#334155"/>
+  <text x="276" y="132" fill="#f8fafc" font-family="Inter" font-size="19">llama</text>
+  <rect x="1094" y="96" width="292" height="58" rx="12" fill="#6d28d9"/><text x="1190" y="132" fill="white" font-family="Inter" font-size="18" font-weight="700">Search</text>
+  <g font-family="Inter" font-size="14" fill="#cbd5e1">
+    <rect x="250" y="174" width="70" height="30" rx="15" fill="#312e81"/><text x="269" y="194">GGUF</text>
+    <rect x="332" y="174" width="82" height="30" rx="15" fill="#1e293b"/><text x="353" y="194">Size</text>
+    <rect x="426" y="174" width="82" height="30" rx="15" fill="#1e293b"/><text x="448" y="194">Quant</text>
+    <rect x="520" y="174" width="90" height="30" rx="15" fill="#1e293b"/><text x="540" y="194">Gated</text>
+    <rect x="622" y="174" width="120" height="30" rx="15" fill="#1e293b"/><text x="642" y="194">Multimodal</text>
+  </g>
+  <g font-family="Inter">
+    <rect x="250" y="230" width="820" height="162" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="274" y="266" fill="#f8fafc" font-size="20" font-weight="700">hugging-quants/Llama-3.2-1B-Instruct-Q8_0-GGUF</text>
+    <text x="274" y="296" fill="#94a3b8" font-size="14">736k downloads • 46 likes • tags: llama, text-generation, gguf</text>
+    <text x="274" y="330" fill="#22c55e" font-size="15" font-weight="700">GPU likely</text>
+    <text x="390" y="330" fill="#cbd5e1" font-size="15">llama-3.2-1b-instruct-q8_0.gguf • 1.3 GB • Q8_0</text>
+    <rect x="926" y="330" width="112" height="36" rx="7" fill="#6d28d9"/><text x="954" y="353" fill="white" font-size="14">Download</text>
+    <rect x="250" y="414" width="820" height="162" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="274" y="450" fill="#f8fafc" font-size="20" font-weight="700">unsloth/Qwen3-Coder-Next-GGUF</text>
+    <text x="274" y="480" fill="#94a3b8" font-size="14">3.0M downloads • 684 likes • qwen3, imatrix, gguf</text>
+    <text x="274" y="514" fill="#eab308" font-size="15" font-weight="700">Partial GPU</text>
+    <text x="390" y="514" fill="#cbd5e1" font-size="15">Q4_K_M 45.1 GB split set • Q2_K 27 GB • many quants</text>
+    <rect x="926" y="514" width="112" height="36" rx="7" fill="#6d28d9"/><text x="954" y="537" fill="white" font-size="14">Details</text>
+    <rect x="250" y="598" width="820" height="162" rx="12" fill="#1e293b" stroke="#334155"/>
+    <text x="274" y="634" fill="#f8fafc" font-size="20" font-weight="700">Andycurrent/Gemma-3-1B-it-GGUF</text>
+    <text x="274" y="664" fill="#94a3b8" font-size="14">2.4M downloads • 50 likes • gemma, instruction-tuned, gguf</text>
+    <text x="274" y="698" fill="#22c55e" font-size="15" font-weight="700">GPU likely</text>
+    <text x="390" y="698" fill="#cbd5e1" font-size="15">Q4_K_M 0.9 GB • Q8_0 1.8 GB • F16 2.7 GB</text>
+  </g>
+  <rect x="1094" y="230" width="292" height="530" rx="12" fill="#162033" stroke="#334155"/>
+  <text x="1118" y="266" fill="#f8fafc" font-family="Inter" font-size="20" font-weight="700">Model card</text>
+  <text x="1118" y="302" fill="#cbd5e1" font-family="Inter" font-size="15">Base model: meta-llama/Llama-3.2</text>
+  <text x="1118" y="330" fill="#cbd5e1" font-family="Inter" font-size="15">Architecture: llama</text>
+  <text x="1118" y="358" fill="#cbd5e1" font-family="Inter" font-size="15">Context: from model metadata</text>
+  <text x="1118" y="386" fill="#22c55e" font-family="Inter" font-size="15" font-weight="700">Recommended: Balanced GPU</text>
+  <rect x="1118" y="424" width="232" height="176" rx="8" fill="#0f172a" stroke="#334155"/>
+  <text x="1134" y="452" fill="#94a3b8" font-family="Inter" font-size="14">README preview:</text>
+  <text x="1134" y="482" fill="#cbd5e1" font-family="Inter" font-size="14">Instruction tuned small model,</text>
+  <text x="1134" y="508" fill="#cbd5e1" font-family="Inter" font-size="14">suitable for local chat and</text>
+  <text x="1134" y="534" fill="#cbd5e1" font-family="Inter" font-size="14">low-memory systems.</text>
+  <rect x="1118" y="632" width="104" height="38" rx="7" fill="#6d28d9"/><text x="1145" y="657" fill="white" font-family="Inter" font-size="15">Run</text>
+  <rect x="1234" y="632" width="116" height="38" rx="7" fill="#334155"/><text x="1256" y="657" fill="#e2e8f0" font-family="Inter" font-size="15">Open HF</text>
+  <rect x="250" y="784" width="1136" height="120" rx="12" fill="#020617" stroke="#334155"/>
+  <text x="274" y="818" fill="#f8fafc" font-family="Inter" font-size="18" font-weight="700">Download queue</text>
+  <rect x="274" y="846" width="580" height="18" rx="9" fill="#1e293b"/><rect x="274" y="846" width="310" height="18" rx="9" fill="#6d28d9"/>
+  <text x="874" y="862" fill="#cbd5e1" font-family="Inter" font-size="14">Q4_K_M.gguf 53%</text>
+</svg>
